@@ -1,0 +1,76 @@
+{
+  "case_id": "test_002_start_default_dual_headset",
+  "name": "进入默认双耳机模式并开始关闭录音",
+  "start": {
+    "mode": "launcher",
+    "no_reset": true
+  },
+  "blockers": [
+    "耳机未连接",
+    "请连接蓝牙耳机以使用此功能",
+    "无录音权限",
+    "录音权限",
+    "麦克风权限",
+    "连接错误",
+    "解析错误",
+    "异常",
+    "失败"
+  ],
+  "steps": [
+    {
+      "action": "click",
+      "name": "点击桌面 Auro AI",
+      "locator": {
+        "by": "accessibility_id",
+        "value": "Auro AI"
+      },
+      "timeout": 30
+    },
+    {
+      "action": "tap_coordinate",
+      "name": "点击首页-翻译中心",
+      "x": 280,
+      "y": 836
+    },
+    {
+      "action": "tap_coordinate",
+      "name": "点击翻译模式页-开始双耳机模式",
+      "x": 540,
+      "y": 733
+    },
+    {
+      "action": "assert_text",
+      "name": "确认进入双耳机模式页面",
+      "text": "双耳机模式",
+      "timeout": 30
+    },
+    {
+      "action": "tap_coordinate",
+      "name": "点击底部麦克风-开始录音",
+      "x": 540,
+      "y": 2148
+    },
+    {
+      "action": "sleep",
+      "name": "录音保持 5 秒",
+      "seconds": 5
+    },
+    {
+      "action": "tap_coordinate",
+      "name": "点击底部麦克风-关闭录音",
+      "x": 540,
+      "y": 2148
+    },
+    {
+      "action": "sleep",
+      "name": "等待关闭录音状态稳定",
+      "seconds": 2
+    },
+    {
+      "action": "assert_text",
+      "name": "确认仍在双耳机模式页面",
+      "text": "双耳机模式",
+      "timeout": 10
+    }
+  ]
+}

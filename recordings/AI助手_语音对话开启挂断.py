@@ -1,0 +1,6 @@
+el4 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="AI 助手")
+el4.click()
+el5 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="语音对话")
+el5.click()
+el6 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.widget.Button\").instance(3)")
+el6.click()

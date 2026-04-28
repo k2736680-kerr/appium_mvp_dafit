@@ -1,0 +1,6 @@
+el32 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\"会议记录\n转录和总结\")")
+el32.click()
+el33 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(7)")
+el33.click()
+el34 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="结束录制")
+el34.click()

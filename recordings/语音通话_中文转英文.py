@@ -1,0 +1,6 @@
+el26 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\"翻译通话\n您的智能助手\")")
+el26.click()
+el27 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="语音通话")
+el27.click()
+el28 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="分享邀请链接")
+el28.click()

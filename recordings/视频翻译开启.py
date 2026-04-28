@@ -1,0 +1,8 @@
+el52 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\"视频翻译\n社交媒体 AI\")")
+el52.click()
+el53 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(12)")
+el53.click()
+el54 = driver.find_element(by=AppiumBy.ID, value="android:id/button1")
+el54.click()
+el55 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(11)")
+el55.click()

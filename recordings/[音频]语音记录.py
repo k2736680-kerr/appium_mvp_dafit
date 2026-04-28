@@ -1,0 +1,6 @@
+el47 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\"语音记录\n捕捉想法\")")
+el47.click()
+el48 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="开始录音")
+el48.click()
+el49 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(12)")
+el49.click()

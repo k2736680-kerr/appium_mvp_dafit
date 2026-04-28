@@ -1,0 +1,8 @@
+el11 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\"翻译中心\n面对面，无缝交流\")")
+el11.click()
+el12 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="开始单向模式")
+el12.click()
+el13 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(8)")
+el13.click()
+el14 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(8)")
+el14.click()

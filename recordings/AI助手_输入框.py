@@ -1,0 +1,7 @@
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="AI 助手")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.CLASS_NAME, value="android.widget.EditText")
+el2.click()
+el2.send_keys("你好，今天天气怎么样")
+el3 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.widget.Button\").instance(1)")
+el3.click()
