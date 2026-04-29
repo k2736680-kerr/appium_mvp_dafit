@@ -2,6 +2,7 @@ from core.recording_rules import (
     augment_recording_steps,
     infer_audio_language,
     parse_case_labels,
+    parse_case_priority,
     parse_language_direction,
 )
 
@@ -9,12 +10,26 @@ from core.recording_rules import (
 def test_parse_case_labels_translation_implies_audio():
     labels = parse_case_labels("[翻译]双耳机模式_中文转英文")
     assert labels["clean_title"] == "双耳机模式_中文转英文"
+    assert labels["priority"] is None
     assert labels["enable_audio"] is True
     assert labels["enable_translation"] is True
 
 
+def test_parse_case_labels_supports_priority_tags():
+    bracket_labels = parse_case_labels("[P0][翻译]双耳机模式_中文转英文")
+    assert bracket_labels["clean_title"] == "双耳机模式_中文转英文"
+    assert bracket_labels["priority"] == 0
+    assert bracket_labels["enable_translation"] is True
+
+    prefix_labels = parse_case_labels("p3_帮助与支持")
+    assert prefix_labels["clean_title"] == "帮助与支持"
+    assert prefix_labels["priority"] == 3
+    assert parse_case_priority("普通用例") is None
+
+
 def test_parse_language_direction():
     assert parse_language_direction("双耳机模式_中文转英文") == ("zh", "en")
+    assert parse_language_direction("单向模式_日文转英文") == ("ja", "en")
 
 
 def test_infer_audio_language_audio_only_uses_first_language():

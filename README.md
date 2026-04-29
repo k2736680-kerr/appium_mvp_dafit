@@ -60,8 +60,16 @@ pytest -v tests\test_run_recordings.py --html=reports\recording_report.html --se
 - 无标签：只回放操作，例如 `拍照流程.py`
 - `[音频]`：回放 + 自动播放音频，例如 `[音频]会议记录_中文.py`
 - `[翻译]`：回放 + 自动播放音频 + 翻译语义校验，例如 `[翻译]双耳机模式_中文转英文.py`
+- `[P0]` / `[P1]` / `[P2]` / `[P3]`：控制批量执行顺序，P0 最先，未标记的排在 P3 后面
 
 `[翻译]` 自动包含 `[音频]` 能力。
+
+优先级标签可以和功能标签组合，例如：
+
+```text
+recordings\[P0][翻译]双耳机模式_英文转中文.py
+recordings\p1_帮助与支持.py
+```
 
 ## 音频规则
 
@@ -104,3 +112,14 @@ https://dashscope.aliyuncs.com/compatible-mode/v1
 - 右上角 `未连接` 不判失败
 - `耳机未连接`、`请连接蓝牙耳机以使用此功能`、`录音权限`、`连接错误`、`解析错误` 等阻断弹窗判失败
 - 现有固定坐标规则仍由框架统一接管，不要求手改录制文件
+
+## 夜间自动运行
+
+可用 `scripts/nightly_run.py` 配合 Windows 任务计划程序做夜间自动回归和钉钉通知。
+
+- 默认每天 23:30 运行全部录制用例
+- 钉钉发送时间窗限制为 23:30 到次日 05:00
+- 白天手工运行不会发群
+- 报告链接由 `scripts/report_server.py` 常驻提供 HTTP 访问
+
+本地 webhook、端口和模拟器配置在 `scripts/nightly_config.local.json`，该文件已忽略，不提交到远端。

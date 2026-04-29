@@ -7,3 +7,4 @@ artifacts/*
 !artifacts/.gitkeep
 reports/*
 !reports/.gitkeep
+scripts/nightly_config.local.json

@@ -1,3 +1,4 @@
+import re
 from copy import deepcopy
 
 from core.config import AUDIO_SETTLE_SECONDS
@@ -5,6 +6,9 @@ from core.config import AUDIO_SETTLE_SECONDS
 
 CASE_TAG_AUDIO = "[音频]"
 CASE_TAG_TRANSLATION = "[翻译]"
+PRIORITY_TAG_PATTERN = re.compile(
+    r"^\s*(?:\[(?P<bracket>[Pp][0-3])\]|(?P<prefix>[Pp][0-3])(?:[_\-\s]+))"
+)
 MIC_STEP_NAME = "点击底部麦克风按钮"
 STOP_RECORDING_KEYWORDS = ("关闭录音", "停止录音", "结束录音", "关闭", "停止", "结束")
 START_RECORDING_KEYWORDS = ("开始录音", "开始录制", "开始记录", "录音", "录制")
@@ -14,15 +18,25 @@ LANGUAGE_NAME_TO_CODE = {
     "中文": "zh",
     "英文": "en",
     "日语": "ja",
+    "日文": "ja",
     "韩语": "ko",
 }
 
 
 def strip_case_tags(title: str) -> str:
-    clean_title = title
+    clean_title = PRIORITY_TAG_PATTERN.sub("", title, count=1)
     for tag in (CASE_TAG_TRANSLATION, CASE_TAG_AUDIO):
         clean_title = clean_title.replace(tag, "")
     return clean_title.strip()
+
+
+def parse_case_priority(title: str):
+    match = PRIORITY_TAG_PATTERN.match(title)
+    if not match:
+        return None
+
+    value = match.group("bracket") or match.group("prefix")
+    return int(value[1])
 
 
 def parse_case_labels(title: str) -> dict:
@@ -32,6 +46,7 @@ def parse_case_labels(title: str) -> dict:
     return {
         "raw_title": title,
         "clean_title": clean_title,
+        "priority": parse_case_priority(title),
         "enable_audio": enable_audio,
         "enable_translation": enable_translation,
     }

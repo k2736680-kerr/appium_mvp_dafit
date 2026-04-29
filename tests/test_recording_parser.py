@@ -1,4 +1,12 @@
-from tests.test_run_recordings import parse_inspector_python, parse_swipe_events
+from pathlib import Path
+
+from tests.test_run_recordings import (
+    parse_inspector_python,
+    parse_swipe_events,
+    parse_tap_events,
+    recording_id,
+    recording_sort_key,
+)
 
 
 class FakeRecording:
@@ -35,6 +43,29 @@ actions.perform()
     }
 
 
+def test_parse_tap_events_from_action_chains():
+    text = """
+actions = ActionChains(driver)
+actions.w3c_actions = ActionBuilder(driver, mouse=PointerInput(interaction.POINTER_TOUCH, "touch"))
+actions.w3c_actions.pointer_action.move_to_location(497, 444)
+actions.w3c_actions.pointer_action.pointer_down()
+actions.w3c_actions.pointer_action.pause(0.1)
+actions.w3c_actions.pointer_action.release()
+actions.perform()
+"""
+
+    events = parse_tap_events(text)
+
+    assert len(events) == 1
+    assert events[0]["step"] == {
+        "action": "tap_point",
+        "name": "点击坐标：(497,444)",
+        "x": 497,
+        "y": 444,
+        "wait_after": 1,
+    }
+
+
 def test_parse_inspector_python_keeps_click_and_swipe_order():
     recording = FakeRecording(
         """
@@ -59,6 +90,32 @@ el2.click()
     assert [step["action"] for step in steps] == ["tap_point", "swipe_point", "click"]
     assert steps[1]["name"] == "滑动：上滑 (514,1372) -> (520,766)"
     assert [locator["value"] for locator in raw_locators] == ["开始双耳机模式", "关闭"]
+
+
+def test_parse_inspector_python_keeps_click_and_tap_order():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="历史")
+el1.click()
+
+actions = ActionChains(driver)
+actions.w3c_actions = ActionBuilder(driver, mouse=PointerInput(interaction.POINTER_TOUCH, "touch"))
+actions.w3c_actions.pointer_action.move_to_location(472, 592)
+actions.w3c_actions.pointer_action.pointer_down()
+actions.w3c_actions.pointer_action.pause(0.1)
+actions.w3c_actions.pointer_action.release()
+actions.perform()
+
+el2 = driver.find_element(by=AppiumBy.CLASS_NAME, value="android.widget.Button")
+el2.click()
+""",
+    )
+
+    steps, raw_locators = parse_inspector_python(recording)
+
+    assert [step["action"] for step in steps] == ["click", "tap_point", "click"]
+    assert steps[1]["name"] == "点击坐标：(472,592)"
+    assert [locator["value"] for locator in raw_locators] == ["历史", "android.widget.Button"]
 
 
 def test_parse_single_direction_mode_instance_8_as_bottom_mic():
@@ -197,3 +254,23 @@ el1.click()
     assert steps[0]["x"] == 540
     assert steps[0]["y"] == 1273
     assert steps[0]["attempts"] == 4
+
+
+def test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked():
+    files = [
+        Path("recordings/普通用例.py"),
+        Path("recordings/[P2]第二批.py"),
+        Path("recordings/p0_冒烟.py"),
+        Path("recordings/[P1][翻译]核心翻译_中文转英文.py"),
+        Path("recordings/[P3]低优先级.py"),
+    ]
+
+    ordered = sorted(files, key=recording_sort_key)
+
+    assert [recording_id(path) for path in ordered] == [
+        "P0-冒烟",
+        "P1-核心翻译_中文转英文",
+        "P2-第二批",
+        "P3-低优先级",
+        "普通用例",
+    ]

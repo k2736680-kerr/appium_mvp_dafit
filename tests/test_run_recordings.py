@@ -81,6 +81,10 @@ def step_name_from_swipe(start_x: int, start_y: int, end_x: int, end_y: int) -> 
     return f"滑动：{direction} ({start_x},{start_y}) -> ({end_x},{end_y})"
 
 
+def step_name_from_tap(x: int, y: int) -> str:
+    return f"点击坐标：({x},{y})"
+
+
 def wait_after_click(locator: dict, title: str = "") -> float:
     by = locator.get("by")
     value = locator.get("value", "")
@@ -152,7 +156,10 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     # 会议记录页底部录制按钮。
     # Inspector 会导出 instance(7)，但实际回放时这个弱定位不稳定，容易没有点到
     # 底部录制按钮，导致后续找不到“结束录制”。
-    if "会议记录" in title and 'className("android.view.View").instance(7)' in value:
+    if "会议记录" in title and (
+        'className("android.view.View").instance(7)' in value
+        or 'className("android.view.View").instance(11)' in value
+    ):
         return {
             "action": "tap_point",
             "name": "点击会议记录-底部录制按钮",
@@ -255,6 +262,36 @@ def parse_swipe_events(text: str):
     return events
 
 
+def parse_tap_events(text: str):
+    tap_pattern = re.compile(
+        r"(?P<var>\w+)\.w3c_actions\.pointer_action\.move_to_location\(\s*"
+        r"(?P<x>-?\d+)\s*,\s*(?P<y>-?\d+)\s*\)"
+        r"(?:(?!(?P=var)\.perform\(\)|(?P=var)\.w3c_actions\.pointer_action\.move_to_location\().)*?"
+        r"(?P=var)\.w3c_actions\.pointer_action\.pointer_down\(\)"
+        r"(?:(?!(?P=var)\.perform\(\)|(?P=var)\.w3c_actions\.pointer_action\.move_to_location\().)*?"
+        r"(?P=var)\.w3c_actions\.pointer_action\.(?:release|pointer_up)\(\)"
+        r"(?:(?!(?P=var)\.perform\(\)).)*?"
+        r"(?P=var)\.perform\(\)",
+        re.S,
+    )
+
+    events = []
+    for match in tap_pattern.finditer(text):
+        x = int(match.group("x"))
+        y = int(match.group("y"))
+        events.append({
+            "position": match.start(),
+            "step": {
+                "action": "tap_point",
+                "name": step_name_from_tap(x, y),
+                "x": x,
+                "y": y,
+                "wait_after": 1,
+            },
+        })
+    return events
+
+
 def parse_inspector_python(py_file: Path):
     """
     解析 Appium Inspector 导出的 Python 代码。
@@ -347,6 +384,7 @@ def parse_inspector_python(py_file: Path):
             },
         })
 
+    events.extend(parse_tap_events(text))
     events.extend(parse_swipe_events(text))
     events.sort(key=lambda item: item["position"])
     steps = [item["step"] for item in events]
@@ -419,6 +457,22 @@ def recording_to_case(py_file: Path):
     }
 
 
+def recording_sort_key(path: Path):
+    labels = parse_case_labels(path.stem)
+    priority = labels.get("priority")
+    priority_order = priority if priority is not None else 99
+    return (priority_order, path.stem.casefold())
+
+
+def recording_id(path: Path):
+    labels = parse_case_labels(path.stem)
+    priority = labels.get("priority")
+    if priority is None:
+        return path.stem
+    title = labels["clean_title"] or path.stem
+    return f"P{priority}-{title}"
+
+
 def load_recording_files():
     single_file = os.environ.get("RECORDING_FILE")
     if single_file:
@@ -435,7 +489,7 @@ def load_recording_files():
             continue
         files.append(path)
 
-    return files
+    return sorted(files, key=recording_sort_key)
 
 
 def save_prelude_debug(driver, name):
@@ -553,7 +607,7 @@ RECORDING_FILES = load_recording_files()
 @pytest.mark.parametrize(
     "recording_file",
     RECORDING_FILES,
-    ids=[p.stem for p in RECORDING_FILES]
+    ids=[recording_id(p) for p in RECORDING_FILES]
 )
 def test_run_recording(recording_file):
     case_data = recording_to_case(recording_file)

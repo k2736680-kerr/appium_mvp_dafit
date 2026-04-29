@@ -1,3 +1,4 @@
+import sys
 import time
 import threading
 
@@ -14,6 +15,15 @@ from core.translation import (
     extract_visible_texts,
     pick_translation_pair,
 )
+
+
+def safe_print(*args, **kwargs):
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    safe_args = [
+        str(arg).encode(encoding, errors="backslashreplace").decode(encoding)
+        for arg in args
+    ]
+    print(*safe_args, **kwargs)
 
 
 DEFAULT_BLOCKERS = [
@@ -76,7 +86,7 @@ class CaseRunner:
     def run_step(self, index, step):
         action = step.get("action")
         name = self.step_name(index, step)
-        print(f"\n[STEP] {index}: {name} | action={action}")
+        safe_print(f"\n[STEP] {index}: {name} | action={action}")
 
         if action == "click":
             self.action_click(step)
@@ -408,7 +418,7 @@ class CaseRunner:
                     source_lang=source_lang,
                     target_lang=target_lang,
                 )
-                print(
+                safe_print(
                     "[TRANSLATION]",
                     f"source={source_text}",
                     f"target={target_text}",

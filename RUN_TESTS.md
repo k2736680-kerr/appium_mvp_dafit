@@ -98,13 +98,53 @@ set RECORDING_FILE=
 
 然后再执行 pytest 命令。
 
-## 9. 常见文件名标签
+## 9. 夜间自动运行和钉钉通知
+
+夜间自动运行由 `scripts\nightly_run.py` 负责：
+
+- 每晚 23:30 运行全部 `recordings` 用例
+- 启动或复用本地报告 HTTP 服务
+- 只在 23:30 到次日 05:00 之间发送钉钉消息
+- 白天手工运行不会发群，除非显式使用 `--notify always`
+
+钉钉 webhook 和本机环境配置在：
+
+```cmd
+scripts\nightly_config.local.json
+```
+
+这个文件已加入 `.gitignore`，不会提交到远端。
+
+安装 Windows 定时任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_nightly_task.ps1
+```
+
+安装后会创建两个任务：
+
+```text
+AppiumMvpReportServer：登录时启动报告 HTTP 服务
+AppiumMvpNightlyRun：每天 23:30 运行测试并在允许时间窗内推送钉钉
+```
+
+报告链接默认使用本机局域网 IP，例如：
+
+```text
+http://本机IP:8876/recording_report_bundle_xxx/recording_report.html
+```
+
+如果钉钉群成员不在同一网络，或手机无法访问电脑 IP，需要在 `nightly_config.local.json`
+里把 `report_base_url` 改成能访问到这台电脑的固定地址。
+
+## 10. 常见文件名标签
 
 ```text
 无标签：只回放动作
 [音频]：回放 + 音频注入，不做翻译校验
 [翻译]：回放 + 音频注入 + 翻译语义校验
 长按录音：文件名里包含“长按录音”
+P0/P1/P2/P3：按优先级顺序执行，P0 最先，P3 最后，未标记的排在 P3 后面
 ```
 
 示例：
@@ -114,4 +154,6 @@ recordings\睡眠中心_切换.py
 recordings\[音频]会议记录_中文.py
 recordings\[翻译]双耳机模式_英文转中文.py
 recordings\[翻译]手机耳机_长按录音_中文转英文.py
+recordings\[P0][翻译]双耳机模式_英文转中文.py
+recordings\p1_帮助与支持.py
 ```
