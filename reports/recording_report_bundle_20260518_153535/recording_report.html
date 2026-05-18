@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>自动化测试报告 - recording_report_bundle_20260518_153535</title>
+  <style>
+    body {
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background-color: #fff;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      border-bottom: 3px solid #4CAF50;
+      padding-bottom: 10px;
+      margin-top: 0;
+    }
+    h2 {
+      color: #555;
+      margin-top: 30px;
+    }
+    h3 {
+      color: #555;
+      margin: 18px 0 12px;
+    }
+    .info {
+      color: #666;
+      font-size: 14px;
+      margin: 10px 0;
+      line-height: 1.8;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .summary-card {
+      background-color: #f9f9f9;
+      padding: 20px;
+      border-radius: 8px;
+      text-align: center;
+      border: 1px solid #eee;
+    }
+    .summary-card h3 {
+      margin: 0 0 10px 0;
+      color: #666;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .summary-card .value {
+      font-size: 32px;
+      font-weight: bold;
+      color: #333;
+    }
+    .passed { color: #4CAF50 !important; }
+    .failed { color: #f44336 !important; }
+    .skipped { color: #ff9800 !important; }
+    .error { color: #9c27b0 !important; }
+    .test-results {
+      margin-top: 20px;
+    }
+    .test-case {
+      border: 1px solid #ddd;
+      margin-bottom: 12px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .test-case-header {
+      padding: 15px;
+      background-color: #f9f9f9;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+    }
+    .test-case-header:hover {
+      background-color: #e9e9e9;
+    }
+    .case-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #333;
+    }
+    .case-subtitle {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #777;
+    }
+    .case-header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .step-count {
+      font-size: 12px;
+      color: #666;
+      background: #eee;
+      padding: 5px 8px;
+      border-radius: 4px;
+    }
+    .test-case-body {
+      padding: 16px;
+      display: none;
+      border-top: 1px solid #ddd;
+    }
+    .test-case.show .test-case-body {
+      display: block;
+    }
+    .status-badge {
+      padding: 5px 10px;
+      border-radius: 4px;
+      color: white;
+      font-weight: bold;
+      font-size: 12px;
+    }
+    .status-badge.PASSED { background-color: #4CAF50; }
+    .status-badge.FAILED { background-color: #f44336; }
+    .status-badge.SKIPPED { background-color: #ff9800; }
+    .status-badge.ERROR { background-color: #9c27b0; }
+    .case-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    .failure-box {
+      padding: 12px;
+      margin: 12px 0;
+      background-color: #ffebee;
+      border-left: 3px solid #f44336;
+      color: #7f1d1d;
+      line-height: 1.6;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) 180px;
+      gap: 14px;
+      padding: 12px;
+      margin: 8px 0;
+      background-color: #f5f5f5;
+      border-left: 3px solid #4CAF50;
+      border-radius: 4px;
+      align-items: start;
+    }
+    .step-title {
+      font-weight: 700;
+      color: #333;
+      line-height: 1.6;
+    }
+    .step-links {
+      margin-top: 8px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .step-links a {
+      color: #1976D2;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .step-links a:hover {
+      text-decoration: underline;
+    }
+    .step-shot {
+      display: block;
+      width: 180px;
+      height: 320px;
+      background: #111;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid #ddd;
+    }
+    .step-shot img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .empty-steps {
+      padding: 12px;
+      background: #fff8e1;
+      border-left: 3px solid #ff9800;
+      color: #795548;
+    }
+    @media (max-width: 760px) {
+      .container { padding: 18px; }
+      .test-case-header { align-items: flex-start; flex-direction: column; }
+      .step { grid-template-columns: 1fr; }
+      .step-shot { width: 100%; height: auto; aspect-ratio: 9 / 16; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>自动化测试报告</h1>
+    <div class="info">
+      <p><strong>报告ID:</strong> recording_report_bundle_20260518_153535</p>
+      <p><strong>应用名称:</strong> Auro AI</p>
+      <p><strong>生成时间:</strong> 2026-05-18 15:35:35</p>
+      <p><strong>执行时长:</strong> 0秒</p>
+      <p><strong>项目路径:</strong> E:\AutoTestTools\Projects\appium_mvp_dafit</p>
+    </div>
+    <h2>测试摘要</h2>
+    <div class="summary">
+      <div class="summary-card"><h3>总测试用例</h3><div class="value">42</div></div>
+      <div class="summary-card"><h3>通过</h3><div class="value passed">42</div></div>
+      <div class="summary-card"><h3>失败</h3><div class="value failed">0</div></div>
+      <div class="summary-card"><h3>跳过</h3><div class="value skipped">0</div></div>
+      <div class="summary-card"><h3>错误</h3><div class="value error">0</div></div>
+      <div class="summary-card"><h3>通过率</h3><div class="value">100%</div></div>
+    </div>
+    <h2>测试详情</h2>
+    <div class="test-results">
+      <div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_page_signature_uses_standard_metadata_without_page_patch</div><div class="case-subtitle">测试 · tests/test_unified_runner.py::test_page_signature_uses_standard_metadata_without_page_patch</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_unified_runner.py::test_page_signature_uses_standard_metadata_without_page_patch</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_tab_default_strategy_is_content_changed_plus_no_crash</div><div class="case-subtitle">测试 · tests/test_unified_runner.py::test_tab_default_strategy_is_content_changed_plus_no_crash</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_unified_runner.py::test_tab_default_strategy_is_content_changed_plus_no_crash</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_instance_only_locator_is_ranked_last_and_warned</div><div class="case-subtitle">测试 · tests/test_unified_runner.py::test_instance_only_locator_is_ranked_last_and_warned</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_unified_runner.py::test_instance_only_locator_is_ranked_last_and_warned</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_report_saves_failure_evidence_and_json_summary</div><div class="case-subtitle">测试 · tests/test_unified_runner.py::test_report_saves_failure_evidence_and_json_summary</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_unified_runner.py::test_report_saves_failure_evidence_and_json_summary</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_swipe_events_from_action_chains</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_swipe_events_from_action_chains</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_swipe_events_from_action_chains</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_tap_events_from_action_chains</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_tap_events_from_action_chains</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_tap_events_from_action_chains</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_inspector_python_keeps_click_and_swipe_order</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_inspector_python_keeps_click_and_swipe_order</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_inspector_python_keeps_click_and_swipe_order</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_inspector_python_keeps_click_and_tap_order</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_inspector_python_keeps_click_and_tap_order</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_inspector_python_keeps_click_and_tap_order</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_single_direction_mode_instance_8_as_bottom_mic</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_single_direction_mode_instance_8_as_bottom_mic</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_single_direction_mode_instance_8_as_bottom_mic</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_meeting_record_instance_7_as_record_button</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_meeting_record_instance_7_as_record_button</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_meeting_record_instance_7_as_record_button</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_send_keys_as_input_text</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_send_keys_as_input_text</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_send_keys_as_input_text</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_profile_fields_ignore_recorded_values</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_profile_fields_ignore_recorded_values</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_profile_fields_ignore_recorded_values</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_avatar_image_as_stable_coordinate_for_avatar_case</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_parse_avatar_image_as_stable_coordinate_for_avatar_case</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_parse_avatar_image_as_stable_coordinate_for_avatar_case</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_profile_submit_waits_for_save_state_to_clear</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_profile_submit_waits_for_save_state_to_clear</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_profile_submit_waits_for_save_state_to_clear</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_profile_my_account_uses_conditional_coordinate_tap</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_profile_my_account_uses_conditional_coordinate_tap</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_profile_my_account_uses_conditional_coordinate_tap</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_recording_case_uses_shared_error_blockers</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_recording_case_uses_shared_error_blockers</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_recording_case_uses_shared_error_blockers</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_recording_album_image_translation_appends_visual_assert</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_recording_album_image_translation_appends_visual_assert</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_recording_album_image_translation_appends_visual_assert</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_assert_translation_fails_on_blocker_before_stale_text_validation</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_assert_translation_fails_on_blocker_before_stale_text_validation</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_assert_translation_fails_on_blocker_before_stale_text_validation</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_assert_image_translation_uses_visual_validator</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_assert_image_translation_uses_visual_validator</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_assert_image_translation_uses_visual_validator</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_assert_image_translation_retries_until_result_loaded</div><div class="case-subtitle">测试 · tests/test_recording_parser.py::test_assert_image_translation_retries_until_result_loaded</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_parser.py::test_assert_image_translation_retries_until_result_loaded</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_extract_visible_texts_collects_text_and_content_desc</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_extract_visible_texts_collects_text_and_content_desc</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_extract_visible_texts_collects_text_and_content_desc</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_pick_translation_pair_filters_static_ui_labels</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_pick_translation_pair_filters_static_ui_labels</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_pick_translation_pair_filters_static_ui_labels</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_split_mixed_language_text_for_english_to_chinese</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_split_mixed_language_text_for_english_to_chinese</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_split_mixed_language_text_for_english_to_chinese</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_pick_translation_pair_supports_single_bilingual_node</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_pick_translation_pair_supports_single_bilingual_node</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_pick_translation_pair_supports_single_bilingual_node</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_pick_translation_pair_prefers_mixed_bilingual_line_over_orphans</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_pick_translation_pair_prefers_mixed_bilingual_line_over_orphans</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_pick_translation_pair_prefers_mixed_bilingual_line_over_orphans</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_pick_translation_pair_ignores_demo_greeting_exact_phrase</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_pick_translation_pair_ignores_demo_greeting_exact_phrase</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_pick_translation_pair_ignores_demo_greeting_exact_phrase</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_extract_snippets_prefers_longest_mixed_over_short_fragment</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_extract_snippets_prefers_longest_mixed_over_short_fragment</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_extract_snippets_prefers_longest_mixed_over_short_fragment</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_resolve_translation_pair_returns_snippets_and_two_mono</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_resolve_translation_pair_returns_snippets_and_two_mono</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_resolve_translation_pair_returns_snippets_and_two_mono</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_pick_translation_pair_adjacent_subtitle_source_after_target</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_pick_translation_pair_adjacent_subtitle_source_after_target</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_pick_translation_pair_adjacent_subtitle_source_after_target</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_pick_translation_pair_ignores_language_labels_and_translate_button</div><div class="case-subtitle">测试 · tests/test_translation_helpers.py::test_pick_translation_pair_ignores_language_labels_and_translate_button</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_translation_helpers.py::test_pick_translation_pair_ignores_language_labels_and_translate_button</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_case_labels_translation_implies_audio</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_parse_case_labels_translation_implies_audio</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_parse_case_labels_translation_implies_audio</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_case_labels_supports_priority_tags</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_parse_case_labels_supports_priority_tags</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_parse_case_labels_supports_priority_tags</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_parse_language_direction</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_parse_language_direction</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_parse_language_direction</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_infer_audio_language_audio_only_uses_first_language</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_infer_audio_language_audio_only_uses_first_language</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_infer_audio_language_audio_only_uses_first_language</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_augment_recording_steps_for_translation</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_augment_recording_steps_for_translation</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_augment_recording_steps_for_translation</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_augment_recording_steps_accepts_explicit_close_action</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_augment_recording_steps_accepts_explicit_close_action</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_augment_recording_steps_accepts_explicit_close_action</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_augment_recording_steps_requires_start_and_stop_actions</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_augment_recording_steps_requires_start_and_stop_actions</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_augment_recording_steps_requires_start_and_stop_actions</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_augment_recording_steps_long_press_uses_single_synced_action</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_augment_recording_steps_long_press_uses_single_synced_action</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_augment_recording_steps_long_press_uses_single_synced_action</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_augment_recording_steps_long_press_skips_recorded_stop_click</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_augment_recording_steps_long_press_skips_recorded_stop_click</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_augment_recording_steps_long_press_skips_recorded_stop_click</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_augment_recording_steps_infers_start_before_explicit_stop</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_augment_recording_steps_infers_start_before_explicit_stop</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_augment_recording_steps_infers_start_before_explicit_stop</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div><div class="test-case" data-status="PASSED"><div class="test-case-header" onclick="this.parentElement.classList.toggle('show')"><div><div class="case-title">test_augment_recording_steps_accepts_start_recording_text_and_next_stop</div><div class="case-subtitle">测试 · tests/test_recording_rules.py::test_augment_recording_steps_accepts_start_recording_text_and_next_stop</div></div><div class="case-header-right"><span class="step-count">0 步</span><span class="status-badge PASSED">PASSED</span></div></div><div class="test-case-body"><div class="case-meta"><div><strong>类型：</strong>测试</div><div><strong>耗时：</strong>0秒</div><div><strong>来源：</strong>tests/test_recording_rules.py::test_augment_recording_steps_accepts_start_recording_text_and_next_stop</div></div><h3>执行步骤与截图</h3><div class="empty-steps">没有找到本用例的步骤截图。</div></div></div>
+    </div>
+  </div>
+  <script>
+    document.querySelectorAll('.test-case[data-status="FAILED"], .test-case[data-status="ERROR"]').forEach(function(el) {
+      el.classList.add('show');
+    });
+  </script>
+</body>
+</html>

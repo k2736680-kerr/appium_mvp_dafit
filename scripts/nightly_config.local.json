@@ -1,0 +1,23 @@
+{
+  "suite_name": "Auro AI 自动化回归",
+  "dingtalk_webhook": "https://oapi.dingtalk.com/robot/send?access_token=46d467e52386df36131f32a49bbe6769dc448d7cbd17e9aef7b9a103324bb761",
+  "dingtalk_secret": "",
+  "send_window_start": "23:30",
+  "send_window_end": "05:00",
+  "report_server_host": "0.0.0.0",
+  "report_server_port": 8876,
+  "report_base_url": "http://10.0.30.170:8876",
+  "start_report_server_if_missing": true,
+  "start_appium_if_missing": true,
+  "stop_appium_after_run": true,
+  "appium_command": "C:\\Users\\kerr\\AppData\\Roaming\\npm\\appium.cmd",
+  "appium_args": ["--address", "0.0.0.0", "--port", "4723"],
+  "start_emulator_if_missing": true,
+  "stop_emulator_after_run": true,
+  "emulator_exe": "E:\\android_sdk\\emulator\\emulator.exe",
+  "emulator_avd": "Pixel_8a",
+  "adb_exe": "E:\\android_sdk\\platform-tools\\adb.exe",
+  "android_udid": "emulator-5554",
+  "emulator_boot_timeout_seconds": 240,
+  "pytest_timeout_seconds": 14400
+}
