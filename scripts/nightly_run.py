@@ -1,4 +1,5 @@
 import argparse
+import atexit
 import base64
 import contextlib
 import datetime as dt
@@ -34,9 +35,11 @@ DEFAULT_CONFIG = {
     "report_base_url": "",
     "start_report_server_if_missing": True,
     "start_appium_if_missing": True,
+    "stop_appium_after_run": True,
     "appium_command": "appium.cmd",
     "appium_args": ["--address", "0.0.0.0", "--port", "4723"],
     "start_emulator_if_missing": True,
+    "stop_emulator_after_run": True,
     "emulator_exe": r"E:\android_sdk\emulator\emulator.exe",
     "emulator_avd": "Pixel_8a",
     "adb_exe": r"E:\android_sdk\platform-tools\adb.exe",
@@ -92,16 +95,31 @@ def url_ok(url, timeout=3):
         return False
 
 
+def _is_rfc2544_benchmark_ip(ip: str) -> bool:
+    """198.18.0.0/15 is benchmark space; VPN/加速器常把出口伪装成这里，不能当局域网报告地址。"""
+    try:
+        parts = ip.split(".")
+        if len(parts) != 4:
+            return False
+        first, second = int(parts[0]), int(parts[1])
+        return first == 198 and 18 <= second <= 19
+    except ValueError:
+        return False
+
+
 def local_ip():
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("8.8.8.8", 80))
-            return sock.getsockname()[0]
+            candidate = sock.getsockname()[0]
+            if candidate and not _is_rfc2544_benchmark_ip(candidate):
+                return candidate
     except Exception:
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except Exception:
-            return "127.0.0.1"
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        return "127.0.0.1"
 
 
 def build_report_base_url(config):
@@ -113,6 +131,8 @@ def build_report_base_url(config):
 def start_detached(command):
     stdout = subprocess.DEVNULL
     stderr = subprocess.DEVNULL
+    executable = str(command[0]).lower() if command else ""
+    is_emulator = executable.endswith(("emulator", "emulator.exe"))
     if command and str(command[0]).lower().endswith(("appium", "appium.cmd")):
         REPORT_ROOT.mkdir(parents=True, exist_ok=True)
         stdout = open(REPORT_ROOT / "appium_server_stdout.log", "ab")
@@ -123,8 +143,9 @@ def start_detached(command):
         creationflags = (
             getattr(subprocess, "DETACHED_PROCESS", 0)
             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
         )
+        if not is_emulator:
+            creationflags |= getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
         subprocess.Popen(
             command,
@@ -202,11 +223,147 @@ def adb_devices(config):
     return devices
 
 
+def adb_shell(config, args, timeout=10):
+    adb = config.get("adb_exe") or "adb"
+    udid = config.get("android_udid")
+    command = [adb]
+    if udid:
+        command.extend(["-s", udid])
+    command.extend(["shell", *args])
+    return run(command, timeout=timeout)
+
+
+def device_shell_ready(config, timeout=10):
+    try:
+        boot = adb_shell(config, ["getprop", "sys.boot_completed"], timeout=timeout)
+        anim = adb_shell(config, ["getprop", "init.svc.bootanim"], timeout=timeout)
+        ping = adb_shell(config, ["echo", "ready"], timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False
+
+    return (
+        boot.returncode == 0
+        and (boot.stdout or "").strip() == "1"
+        and anim.returncode == 0
+        and (anim.stdout or "").strip() in {"stopped", ""}
+        and ping.returncode == 0
+        and "ready" in (ping.stdout or "")
+    )
+
+
+def wait_for_device_ready(config, timeout_seconds=None):
+    timeout_seconds = int(timeout_seconds or config.get("emulator_boot_timeout_seconds", 240))
+    udid = config.get("android_udid")
+    deadline = time.time() + timeout_seconds
+    last_state = "not checked"
+
+    while time.time() < deadline:
+        devices = adb_devices(config)
+        if (udid and udid in devices) or (not udid and devices):
+            if device_shell_ready(config, timeout=10):
+                return True
+            last_state = "adb device listed, shell not ready"
+        else:
+            last_state = f"waiting for adb device; devices={devices}"
+        time.sleep(5)
+
+    print(f"Android emulator was not ready before timeout: {last_state}")
+    return False
+
+
+def kill_emulator_processes():
+    if os.name != "nt":
+        return
+    run(["taskkill", "/IM", "emulator.exe", "/F"], timeout=20)
+    run(["taskkill", "/IM", "qemu-system-x86_64.exe", "/F"], timeout=20)
+
+
+def appium_port_from_config(config):
+    args = [str(item) for item in config.get("appium_args", [])]
+    for index, item in enumerate(args):
+        if item == "--port" and index + 1 < len(args):
+            try:
+                return int(args[index + 1])
+            except ValueError:
+                pass
+
+    status_url = appium_status_url()
+    try:
+        return int(status_url.rstrip("/").rsplit(":", 1)[1].split("/", 1)[0])
+    except Exception:
+        return 4723
+
+
+def pids_listening_on_port(port):
+    if os.name != "nt":
+        return []
+
+    result = run(["netstat", "-ano", "-p", "tcp"], timeout=10)
+    pids = set()
+    marker = f":{port}"
+    for line in (result.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        if parts[1].endswith(marker) and parts[3].upper() == "LISTENING" and parts[-1].isdigit():
+            pids.add(parts[-1])
+    return sorted(pids)
+
+
+def stop_appium(config):
+    if not config.get("stop_appium_after_run", True):
+        return
+
+    for pid in pids_listening_on_port(appium_port_from_config(config)):
+        run(["taskkill", "/PID", pid, "/F"], timeout=20)
+
+
+def stop_emulator(config):
+    if not config.get("stop_emulator_after_run", True):
+        return
+
+    adb = config.get("adb_exe") or "adb"
+    udid = config.get("android_udid")
+    if udid and udid in adb_devices(config):
+        run([adb, "-s", udid, "emu", "kill"], timeout=20)
+        time.sleep(2)
+
+    kill_emulator_processes()
+
+
+def cleanup_runtime_services(config):
+    # Leave the report server running so DingTalk links remain reachable.
+    stop_appium(config)
+    stop_emulator(config)
+
+
+_CLEANUP_REGISTERED = False
+
+
+def register_runtime_cleanup(config):
+    global _CLEANUP_REGISTERED
+    if _CLEANUP_REGISTERED:
+        return
+    if not config.get("stop_appium_after_run", True) and not config.get("stop_emulator_after_run", True):
+        return
+
+    atexit.register(cleanup_runtime_services, dict(config))
+    _CLEANUP_REGISTERED = True
+
+
 def ensure_emulator(config):
     udid = config.get("android_udid")
     devices = adb_devices(config)
     if (udid and udid in devices) or (not udid and devices):
-        return
+        if wait_for_device_ready(config, timeout_seconds=60):
+            return
+        if not config.get("start_emulator_if_missing", True):
+            return
+        print("Existing Android emulator is listed but not responsive; restarting it.")
+        kill_emulator_processes()
+        run([config.get("adb_exe") or "adb", "kill-server"], timeout=15)
+        run([config.get("adb_exe") or "adb", "start-server"], timeout=15)
+
     if not config.get("start_emulator_if_missing", True):
         return
 
@@ -216,12 +373,11 @@ def ensure_emulator(config):
         return
 
     start_detached([emulator, "-avd", avd])
-    deadline = time.time() + int(config.get("emulator_boot_timeout_seconds", 240))
-    while time.time() < deadline:
-        devices = adb_devices(config)
-        if (udid and udid in devices) or (not udid and devices):
-            return
-        time.sleep(5)
+    if not wait_for_device_ready(config):
+        raise RuntimeError(
+            f"Android emulator did not become ready within "
+            f"{config.get('emulator_boot_timeout_seconds', 240)} seconds"
+        )
 
 
 def latest_report_bundle():
@@ -352,6 +508,14 @@ def run_pytest(config):
 
     env = os.environ.copy()
     env.pop("RECORDING_FILE", None)
+    env["APPIUM_COMMAND"] = str(config.get("appium_command") or "appium.cmd")
+    env["APPIUM_ARGS_JSON"] = json.dumps(config.get("appium_args", []), ensure_ascii=False)
+    env["ANDROID_ADB"] = str(config.get("adb_exe") or "adb")
+    env["ANDROID_UDID"] = str(config.get("android_udid") or "")
+    env["ANDROID_EMULATOR"] = str(config.get("emulator_exe") or "")
+    env["ANDROID_AVD"] = str(config.get("emulator_avd") or "")
+    env["ANDROID_BOOT_TIMEOUT_SECONDS"] = str(config.get("emulator_boot_timeout_seconds", 240))
+    env["ANDROID_AUTO_START_EMULATOR"] = "1" if config.get("start_emulator_if_missing", True) else "0"
     command = [
         str(python_exe),
         "-m",
@@ -456,6 +620,7 @@ def run_nightly(args):
     report_base_url = ensure_report_server(config)
     ensure_appium(config)
     ensure_emulator(config)
+    register_runtime_cleanup(config)
 
     result = run_pytest(config)
     write_run_log(result)

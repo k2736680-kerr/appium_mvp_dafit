@@ -1,12 +1,15 @@
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tests.test_run_recordings import (
     parse_inspector_python,
     parse_swipe_events,
     parse_tap_events,
+    recording_to_case,
     recording_id,
     recording_sort_key,
 )
+from core.runner import CaseRunner
 
 
 class FakeRecording:
@@ -16,6 +19,17 @@ class FakeRecording:
 
     def read_text(self, encoding="utf-8"):
         return self.text
+
+
+class FakeDriver:
+    def __init__(self, page_source):
+        self.page_source = page_source
+
+    def save_screenshot(self, _path):
+        return True
+
+    def get_screenshot_as_base64(self):
+        return "fake-screenshot-base64"
 
 
 def test_parse_swipe_events_from_action_chains():
@@ -251,9 +265,10 @@ el1.click()
     steps, _raw_locators = parse_inspector_python(recording)
 
     assert steps[0]["action"] == "tap_my_account"
-    assert steps[0]["x"] == 540
+    assert steps[0]["x"] == 918
     assert steps[0]["y"] == 1273
-    assert steps[0]["attempts"] == 4
+    assert steps[0]["attempts"] == 6
+    assert steps[0]["attempt_wait"] == 1.5
 
 
 def test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked():
@@ -274,3 +289,158 @@ def test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked():
         "P3-低优先级",
         "普通用例",
     ]
+
+
+def test_recording_case_uses_shared_error_blockers():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\\"图片翻译\\\\n拍摄并翻译\\")")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.view.View\\").instance(6)")
+el2.click()
+""",
+        stem="[P0]图片翻译_英文拍照",
+    )
+
+    case_data = recording_to_case(recording)
+
+    assert "图片翻译失败" in case_data["blockers"]
+    assert "请重试" in case_data["blockers"]
+    assert case_data["recording_meta"]["image_translation"] is False
+    assert case_data["recording_meta"]["source_lang"] is None
+    assert case_data["recording_meta"]["target_lang"] is None
+    assert [step["action"] for step in case_data["steps"]] == ["click", "click"]
+
+
+def test_recording_album_image_translation_appends_visual_assert():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\\"图片翻译\\\\n拍摄并翻译\\")")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.view.View\\").instance(7)")
+el2.click()
+""",
+        stem="[P0]图片翻译_英文拍照_相册",
+    )
+
+    case_data = recording_to_case(recording)
+
+    assert case_data["recording_meta"]["image_translation"] is True
+    assert case_data["recording_meta"]["source_lang"] == "en"
+    assert case_data["recording_meta"]["target_lang"] == "zh"
+    assert case_data["steps"][-1] == {
+        "action": "assert_image_translation",
+        "name": "校验图片翻译结果",
+        "wait_before": 5,
+        "timeout": 60,
+        "poll_interval": 6,
+        "check_blockers": False,
+        "source_lang": "en",
+        "target_lang": "zh",
+    }
+
+
+def test_assert_translation_fails_on_blocker_before_stale_text_validation(monkeypatch):
+    page_source = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy index="0" class="hierarchy">
+  <android.view.View index="0" text="Hello, nice to meet you." content-desc="" />
+  <android.view.View index="1" text="你好，很高兴见到你。" content-desc="" />
+  <android.view.View index="2" text="图片翻译失败，请重试" content-desc="" />
+</hierarchy>
+"""
+    with TemporaryDirectory() as artifacts_root:
+        monkeypatch.setenv("APPIUM_ARTIFACTS_ROOT", artifacts_root)
+        runner = CaseRunner(FakeDriver(page_source), {"case_id": "unit_blocker"})
+
+        class FailIfCalledValidator:
+            def validate_translation(self, **_kwargs):
+                raise AssertionError("不应在阻断错误出现后继续做语义校验")
+
+        runner.translation = FailIfCalledValidator()
+
+        try:
+            runner.action_assert_translation({
+                "source_lang": "en",
+                "target_lang": "zh",
+                "timeout": 1,
+            })
+        except AssertionError as exc:
+            assert "阻断信息：图片翻译失败" in str(exc)
+        else:
+            raise AssertionError("expected translation assertion to fail on blocker")
+
+
+def test_assert_image_translation_uses_visual_validator(monkeypatch):
+    page_source = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy index="0" class="hierarchy">
+  <android.view.View index="0" text="图片翻译" content-desc="" />
+</hierarchy>
+"""
+    calls = []
+
+    with TemporaryDirectory() as artifacts_root:
+        monkeypatch.setenv("APPIUM_ARTIFACTS_ROOT", artifacts_root)
+        runner = CaseRunner(FakeDriver(page_source), {"case_id": "unit_image_translation"})
+
+        class FakeImageValidator:
+            def validate_image_translation(self, **kwargs):
+                calls.append(kwargs)
+                return {
+                    "pass": True,
+                    "reason": "",
+                    "source_text": "Open",
+                    "translated_text": "打开",
+                    "evidence": "截图中展示了源文字和中文译文",
+                }
+
+        runner.image_translation = FakeImageValidator()
+
+        runner.action_assert_image_translation({
+            "source_lang": "en",
+            "target_lang": "zh",
+            "wait_before": 0,
+        })
+
+    assert calls == [{
+        "screenshot_base64": "fake-screenshot-base64",
+        "source_lang": "en",
+        "target_lang": "zh",
+    }]
+
+
+def test_assert_image_translation_retries_until_result_loaded(monkeypatch):
+    page_source = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy index="0" class="hierarchy">
+  <android.view.View index="0" text="图片翻译" content-desc="" />
+</hierarchy>
+"""
+    with TemporaryDirectory() as artifacts_root:
+        monkeypatch.setenv("APPIUM_ARTIFACTS_ROOT", artifacts_root)
+        runner = CaseRunner(FakeDriver(page_source), {"case_id": "unit_image_translation_retry"})
+
+        class FakeImageValidator:
+            def __init__(self):
+                self.calls = 0
+
+            def validate_image_translation(self, **_kwargs):
+                self.calls += 1
+                return {
+                    "pass": self.calls == 2,
+                    "reason": "仍在加载中" if self.calls == 1 else "",
+                    "source_text": "" if self.calls == 1 else "Open",
+                    "translated_text": "" if self.calls == 1 else "打开",
+                    "evidence": "转圈中" if self.calls == 1 else "截图中展示了译文",
+                }
+
+        validator = FakeImageValidator()
+        runner.image_translation = validator
+
+        runner.action_assert_image_translation({
+            "source_lang": "en",
+            "target_lang": "zh",
+            "wait_before": 0,
+            "timeout": 1,
+            "poll_interval": 0,
+        })
+
+    assert validator.calls == 2

@@ -6,9 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from core.driver_factory import create_driver
+from core.driver_factory import (
+    create_driver,
+    is_transient_session_error,
+    quit_driver_safely,
+    restart_appium_server,
+)
 from core.recording_rules import augment_recording_steps, parse_case_labels
-from core.runner import CaseRunner
+from core.runner import CaseRunner, DEFAULT_BLOCKERS
 from core.config import PROJECT_ROOT
 
 
@@ -16,6 +21,16 @@ APP_PACKAGE = "com.moyoung.auro.ai"
 RECORDINGS_DIR = PROJECT_ROOT / "recordings"
 APP_RESTARTED_ONCE = False
 HOME_MARKER = "翻译中心"
+
+# 协议类页面正文中常出现「网络异常」等字样，全局子串会误判为阻断。
+_REGULATION_TITLE_MARKERS = ("服务协议", "隐私政策", "用户协议")
+
+
+def blockers_for_recording_title(clean_title: str) -> list[str]:
+    blockers = list(DEFAULT_BLOCKERS)
+    if any(marker in clean_title for marker in _REGULATION_TITLE_MARKERS):
+        blockers = [b for b in blockers if b != "网络异常"]
+    return blockers
 
 
 def safe_case_id(name: str) -> str:
@@ -121,9 +136,10 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
         return {
             "action": "tap_my_account",
             "name": "进入我的账户",
-            "x": 540,
+            "x": 918,
             "y": 1273,
-            "attempts": 4,
+            "attempts": 6,
+            "attempt_wait": 1.5,
             "wait_after": 2,
         }
 
@@ -171,11 +187,14 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     # 首页 - 翻译中心
     if "翻译中心" in value:
         return {
-            "action": "tap_point",
+            "action": "click",
             "name": "点击首页-翻译中心",
-            "x": 280,
-            "y": 836,
-            "wait_after": 1
+            "locator": {
+                "by": "android_uiautomator",
+                "value": 'new UiSelector().descriptionContains("翻译中心")',
+            },
+            "timeout": 30,
+            "wait_after": 2
         }
 
     # 翻译模式页 - 开始双耳机模式
@@ -219,6 +238,26 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
             "name": "点击底部麦克风按钮",
             "x": 540,
             "y": 2148,
+            "wait_after": 1
+        }
+
+    # 睡眠中心音频卡片的完整 description 会随内容/加载状态变化，
+    # 例如录制时是“放松心灵\n11 min”，回放时可能只剩“放松心灵”。
+    if "睡眠中心_切换" in title and 'description("放松心灵\\n11 min")' in value:
+        return {
+            "action": "tap_point",
+            "name": "点击睡眠中心-当前音频卡片",
+            "x": 540,
+            "y": 760,
+            "wait_after": 1
+        }
+
+    if "睡眠中心_切换" in title and 'description("喜好意识\\n10 min")' in value:
+        return {
+            "action": "tap_point",
+            "name": "点击睡眠中心-当前音频卡片",
+            "x": 540,
+            "y": 760,
             "wait_after": 1
         }
 
@@ -444,15 +483,7 @@ def recording_to_case(py_file: Path):
             "no_reset": True,
             "ensure_app_home": not starts_from_launcher
         },
-        "blockers": [
-            "耳机未连接",
-            "请连接蓝牙耳机以使用此功能",
-            "无录音权限",
-            "录音权限",
-            "麦克风权限",
-            "连接错误",
-            "解析错误"
-        ],
+        "blockers": blockers_for_recording_title(title),
         "steps": steps
     }
 
@@ -616,15 +647,27 @@ def test_run_recording(recording_file):
     start_mode = start.get("mode", "app")
     no_reset = start.get("no_reset", True)
 
-    driver = create_driver(start_mode=start_mode, no_reset=no_reset)
+    last_error = None
+    for attempt in range(1, 3):
+        driver = None
+        try:
+            driver = create_driver(start_mode=start_mode, no_reset=no_reset)
+            restart_app_once_for_run(driver, start_mode=start_mode)
 
-    try:
-        restart_app_once_for_run(driver, start_mode=start_mode)
+            if start.get("ensure_app_home", False):
+                ensure_app_home(driver)
 
-        if start.get("ensure_app_home", False):
-            ensure_app_home(driver)
+            runner = CaseRunner(driver, case_data)
+            runner.run()
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt >= 2 or not is_transient_session_error(exc):
+                raise
+            print(f"[RECOVERY] transient Appium/session error, retry case once: {exc}")
+            restart_appium_server("retry recording case after transient session error")
+        finally:
+            quit_driver_safely(driver)
 
-        runner = CaseRunner(driver, case_data)
-        runner.run()
-    finally:
-        driver.quit()
+    if last_error:
+        raise last_error

@@ -12,8 +12,9 @@ from core.config import APP_PACKAGE, DEFAULT_TIMEOUT, PROJECT_ROOT
 from core.locators import to_appium_locator
 from core.translation import (
     AliyunTranslationValidator,
+    AliyunImageTranslationValidator,
     extract_visible_texts,
-    pick_translation_pair,
+    resolve_translation_pair,
 )
 
 
@@ -34,10 +35,27 @@ DEFAULT_BLOCKERS = [
     "麦克风权限",
     "连接错误",
     "解析错误",
+    "图片翻译失败",
+    "拍照翻译失败",
+    "翻译失败",
+    "翻译出错",
+    "图片识别失败",
+    "识别失败",
+    "识别错误",
+    "请求失败",
+    "网络异常",
+    "服务异常",
+    "发生错误",
+    "出错了",
+    "请稍后重试",
+    "请重试",
+    "无法识别",
+    "未能识别",
+    "无法翻译",
 ]
 
 ROLE_POINTS = {
-    # 1080x2400 下 Inspector 麦克风 bounds 约 [435,2043][645,2253]
+    # 1080x2400 下 Inspector 麦克风 bounds 约 [435,2043][645,2253]。
     # 换算成比例，避免以后不同分辨率完全失效。
     "bottom_mic": {"x_ratio": 0.50, "y_ratio": 0.895},
     "dual_earbuds_mic": {"x_ratio": 0.50, "y_ratio": 0.895},
@@ -54,6 +72,7 @@ class CaseRunner:
         self.artifacts = ArtifactManager(self.case_id)
         self.audio = AudioInjector(PROJECT_ROOT)
         self.translation = AliyunTranslationValidator()
+        self.image_translation = AliyunImageTranslationValidator()
         self.blockers = case_data.get("blockers", DEFAULT_BLOCKERS)
         self.context = {"marked_texts": []}
 
@@ -115,6 +134,10 @@ class CaseRunner:
             print(f"[SLEEP] {seconds}s")
             time.sleep(seconds)
         elif action == "play_audio":
+            pre_delay = float(step.get("pre_delay", 0) or 0)
+            if pre_delay > 0:
+                print(f"[AUDIO] pre_delay {pre_delay}s")
+                time.sleep(pre_delay)
             self.audio.play(
                 step["file"],
                 wait_after=step.get("wait_after", 1),
@@ -126,6 +149,8 @@ class CaseRunner:
             self.action_wait_text(step)
         elif action == "assert_translation":
             self.action_assert_translation(step)
+        elif action == "assert_image_translation":
+            self.action_assert_image_translation(step)
         elif action == "press_back":
             self.driver.press_keycode(4)
             time.sleep(step.get("wait_after", 1))
@@ -144,14 +169,20 @@ class CaseRunner:
 
     def fail_if_blocked(self, index, name):
         page_source = self.driver.page_source
+        keyword = self.find_blocker(page_source)
+        if keyword:
+            self.artifacts.save(self.driver, index, f"blocked_{name}")
+            raise AssertionError(
+                f"用例失败：步骤【{name}】后检测到阻断信息：{keyword}"
+            )
+
+    def find_blocker(self, page_source):
         for keyword in self.blockers:
             # 注意：不要把双耳机页右上角的“未连接”放进 blockers。
             # “耳机未连接”弹窗才是阻断。
             if keyword and keyword in page_source:
-                self.artifacts.save(self.driver, index, f"blocked_{name}")
-                raise AssertionError(
-                    f"用例失败：步骤【{name}】后检测到阻断信息：{keyword}"
-                )
+                return keyword
+        return None
 
     def wait_for_element(self, locator, timeout=None):
         by, value = to_appium_locator(locator)
@@ -225,25 +256,33 @@ class CaseRunner:
     def action_tap_my_account(self, step):
         def is_account_page():
             source = self.driver.page_source
+            if "我的 Auro" in source:
+                return False
             return "用户名" in source and "生日" in source and "性别" in source
 
         if is_account_page():
+            time.sleep(1)
+            if not is_account_page():
+                return self.action_tap_my_account(step)
             print("[TAP_MY_ACCOUNT] 已在我的账户页，跳过入口点击")
             time.sleep(step.get("wait_after", 1))
             return
 
         attempts = int(step.get("attempts", 4))
+        wait_each = float(step.get("attempt_wait", 1.5))
         for attempt in range(1, attempts + 1):
             print(f"[TAP_MY_ACCOUNT] 点击入口，第 {attempt}/{attempts} 次")
             self.driver.execute_script(
                 "mobile: clickGesture",
                 {"x": int(step["x"]), "y": int(step["y"])},
             )
-            time.sleep(1)
+            time.sleep(wait_each)
             if is_account_page():
-                break
+                time.sleep(step.get("wait_after", 1))
+                return
 
-        time.sleep(step.get("wait_after", 1))
+        self.artifacts.save(self.driver, 0, "tap_my_account_failed")
+        raise AssertionError("进入我的账户失败：多次点击入口后仍未检测到用户名/生日/性别字段")
 
     def action_swipe_point(self, step):
         start_x = int(step["start_x"])
@@ -398,11 +437,20 @@ class CaseRunner:
         last_source = None
         last_target = None
         last_texts = []
+        last_semantic_fail = None
 
         while time.time() < end_time:
-            page_texts = self.extract_page_texts()
+            page_source = self.driver.page_source
+            blocker = self.find_blocker(page_source)
+            if blocker:
+                self.artifacts.save(self.driver, 0, "blocked_assert_translation")
+                raise AssertionError(
+                    f"等待翻译结果时检测到阻断信息：{blocker}"
+                )
+
+            page_texts = extract_visible_texts(page_source)
             last_texts = page_texts
-            source_text, target_text = pick_translation_pair(
+            source_text, target_text, snippets = resolve_translation_pair(
                 page_texts,
                 baseline_texts,
                 source_lang,
@@ -422,24 +470,110 @@ class CaseRunner:
                     "[TRANSLATION]",
                     f"source={source_text}",
                     f"target={target_text}",
+                    f"snippets={len(snippets)}",
                     f"back_translation={result['back_translation']}",
                     f"pass={result['pass']}",
                 )
                 if result["pass"]:
                     return
-                raise AssertionError(
-                    "翻译语义校验失败："
-                    f"source={source_text} | "
-                    f"target={target_text} | "
+                if not step.get("skip_vision_fallback", False):
+                    try:
+                        screenshot_b64 = self.driver.get_screenshot_as_base64()
+                        vres = self.translation.validate_translation_with_screenshot(
+                            source_text=source_text,
+                            target_text=target_text,
+                            source_lang=source_lang,
+                            target_lang=target_lang,
+                            screenshot_base64=screenshot_b64,
+                            structured_snippets=snippets,
+                        )
+                        safe_print(
+                            "[TRANSLATION_VISION]",
+                            f"pass={vres['pass']}",
+                            f"screen_src={vres.get('source_read_from_screen', '')}",
+                            f"screen_tgt={vres.get('target_read_from_screen', '')}",
+                            f"reason={vres.get('reason', '')}",
+                        )
+                        if vres.get("pass"):
+                            return
+                    except Exception as exc:
+                        safe_print("[TRANSLATION_VISION]", f"skipped: {exc}")
+                last_semantic_fail = (
+                    f"source={source_text} | target={target_text} | "
                     f"back_translation={result['back_translation']} | "
                     f"reason={result['reason'] or '模型判定不一致'}"
                 )
-
+                safe_print(
+                    "[TRANSLATION]",
+                    "语义未通过，可能为页面示例/错配文案，继续轮询等待",
+                    last_semantic_fail,
+                )
             time.sleep(poll_interval)
 
+        detail = ""
+        if last_semantic_fail:
+            detail = f" 最后一次语义校验：{last_semantic_fail}"
         raise AssertionError(
             "等待翻译结果超时："
             f"source_lang={source_lang}, target_lang={target_lang}, "
             f"last_source={last_source}, last_target={last_target}, "
-            f"visible_texts={last_texts}"
+            f"visible_texts={last_texts}.{detail}"
+        )
+
+    def action_assert_image_translation(self, step):
+        wait_before = float(step.get("wait_before", 5))
+        timeout = float(step.get("timeout", 60))
+        poll_interval = float(step.get("poll_interval", 6))
+        if wait_before > 0:
+            time.sleep(wait_before)
+
+        deadline = time.time() + timeout
+        attempt = 0
+        last_result = None
+
+        while True:
+            page_source = self.driver.page_source
+            blocker = self.find_blocker(page_source)
+            if blocker:
+                self.artifacts.save(self.driver, 0, "blocked_assert_image_translation")
+                raise AssertionError(
+                    f"图片翻译校验前检测到阻断信息：{blocker}"
+                )
+
+            attempt += 1
+            screenshot_base64 = self.driver.get_screenshot_as_base64()
+            result = self.image_translation.validate_image_translation(
+                screenshot_base64=screenshot_base64,
+                source_lang=step.get("source_lang"),
+                target_lang=step.get("target_lang"),
+            )
+            last_result = result
+            safe_print(
+                "[IMAGE_TRANSLATION]",
+                f"attempt={attempt}",
+                f"source={result['source_text']}",
+                f"translated={result['translated_text']}",
+                f"evidence={result['evidence']}",
+                f"pass={result['pass']}",
+            )
+            if result["pass"]:
+                return
+
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            time.sleep(min(poll_interval, remaining))
+
+        result = last_result or {
+            "reason": "图片翻译校验超时，未获取到模型判定结果",
+            "source_text": "",
+            "translated_text": "",
+            "evidence": "",
+        }
+        raise AssertionError(
+            "图片翻译视觉校验超时或失败："
+            f"source={result['source_text']} | "
+            f"translated={result['translated_text']} | "
+            f"evidence={result['evidence']} | "
+            f"reason={result['reason'] or '模型判定图片没有完成翻译'}"
         )

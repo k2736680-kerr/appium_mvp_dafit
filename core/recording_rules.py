@@ -1,7 +1,7 @@
 import re
 from copy import deepcopy
 
-from core.config import AUDIO_SETTLE_SECONDS
+from core.config import AUDIO_SETTLE_SECONDS, AUDIO_START_DELAY_SECONDS
 
 
 CASE_TAG_AUDIO = "[音频]"
@@ -166,6 +166,7 @@ def build_audio_step(audio_lang: str) -> dict:
         "name": f"播放测试音频({audio_lang})",
         "file": f"assets/audio/source_{audio_lang}.wav",
         "fallback_file": "assets/audio/source_en.wav",
+        "pre_delay": AUDIO_START_DELAY_SECONDS,
         "wait_after": 0,
     }
 
@@ -192,7 +193,45 @@ def build_translation_assert_step(source_lang: str, target_lang: str) -> dict:
         "target_lang": target_lang,
         "timeout": 45,
         "poll_interval": 2,
+        "check_blockers": False,
     }
+
+
+def is_image_translation_visual_case(title: str) -> bool:
+    """仅「从相册选图」的图片翻译做视觉模型校验。
+
+    纯「拍照」路径在模拟器上通常没有真实相机画面，不应强行走视觉断言。
+    """
+    return "图片翻译" in title and "相册" in title
+
+
+def infer_image_translation_languages(title: str):
+    direction = parse_language_direction(title)
+    if direction:
+        return direction
+
+    for language_name, language_code in LANGUAGE_NAME_TO_CODE.items():
+        if language_name in title:
+            target_lang = "en" if language_code == "zh" else "zh"
+            return language_code, target_lang
+
+    return None, None
+
+
+def build_image_translation_assert_step(source_lang: str | None, target_lang: str | None) -> dict:
+    step = {
+        "action": "assert_image_translation",
+        "name": "校验图片翻译结果",
+        "wait_before": 5,
+        "timeout": 60,
+        "poll_interval": 6,
+        "check_blockers": False,
+    }
+    if source_lang:
+        step["source_lang"] = source_lang
+    if target_lang:
+        step["target_lang"] = target_lang
+    return step
 
 
 def build_audio_settle_step() -> dict:
@@ -210,9 +249,24 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
         "audio_lang": None,
         "source_lang": None,
         "target_lang": None,
+        "image_translation": False,
     }
+    enable_image_translation = is_image_translation_visual_case(title)
+    image_source_lang, image_target_lang = infer_image_translation_languages(title)
+
+    if enable_image_translation:
+        metadata["image_translation"] = True
+        metadata["source_lang"] = image_source_lang
+        metadata["target_lang"] = image_target_lang
 
     if not enable_audio:
+        if enable_image_translation:
+            steps.append(
+                build_image_translation_assert_step(
+                    image_source_lang,
+                    image_target_lang,
+                )
+            )
         return steps, metadata
 
     use_long_press = is_long_press_recording_case(title)
@@ -281,5 +335,13 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
                     metadata["target_lang"],
                 )
             )
+
+    if enable_image_translation:
+        augmented_steps.append(
+            build_image_translation_assert_step(
+                image_source_lang,
+                image_target_lang,
+            )
+        )
 
     return augmented_steps, metadata
