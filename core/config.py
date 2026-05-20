@@ -13,8 +13,10 @@ ANDROID_UDID = os.environ.get("ANDROID_UDID", "emulator-5554")
 ANDROID_ADB = os.environ.get("ANDROID_ADB", r"E:\android_sdk\platform-tools\adb.exe")
 ANDROID_EMULATOR = os.environ.get("ANDROID_EMULATOR", r"E:\android_sdk\emulator\emulator.exe")
 ANDROID_AVD = os.environ.get("ANDROID_AVD", "Pixel_8a")
+ANDROID_AUDIO_BACKEND = os.environ.get("ANDROID_AUDIO_BACKEND", "dsound")
 ANDROID_BOOT_TIMEOUT_SECONDS = int(os.environ.get("ANDROID_BOOT_TIMEOUT_SECONDS", "240"))
 ANDROID_AUTO_START_EMULATOR = os.environ.get("ANDROID_AUTO_START_EMULATOR", "1").lower() not in {"0", "false", "no"}
+ANDROID_ALLOW_HOST_AUDIO = os.environ.get("ANDROID_ALLOW_HOST_AUDIO", "1").lower() not in {"0", "false", "no"}
 APP_PACKAGE = os.environ.get("APP_PACKAGE", "com.moyoung.auro.ai")
 APP_ACTIVITY = os.environ.get("APP_ACTIVITY", ".MainActivity")
 LAUNCHER_PACKAGE = os.environ.get("LAUNCHER_PACKAGE", "com.google.android.apps.nexuslauncher")
@@ -22,6 +24,9 @@ LAUNCHER_ACTIVITY = os.environ.get("LAUNCHER_ACTIVITY", ".NexusLauncherActivity"
 DEFAULT_TIMEOUT = int(os.environ.get("DEFAULT_TIMEOUT", "30"))
 AUDIO_SETTLE_SECONDS = float(os.environ.get("AUDIO_SETTLE_SECONDS", "4"))
 AUDIO_START_DELAY_SECONDS = float(os.environ.get("AUDIO_START_DELAY_SECONDS", "2"))
+AURO_AUTO_LOGIN = os.environ.get("AURO_AUTO_LOGIN", "1").lower() not in {"0", "false", "no"}
+AURO_LOGIN_ACCOUNT = os.environ.get("AURO_LOGIN_ACCOUNT", "")
+AURO_LOGIN_PASSWORD = os.environ.get("AURO_LOGIN_PASSWORD", "")
 
 
 def load_model_api_key() -> str:

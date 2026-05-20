@@ -9,10 +9,12 @@ from core.config import PROJECT_ROOT
 
 class AudioInjector:
     """
-    负责把测试音频播放到 Windows 默认播放设备。
-    你的环境应把默认播放设备设到 VB-CABLE，并在模拟器 Microphone 里打开
-    Virtual microphone uses host audio input。
+    Plays test audio through the Windows playback device.
+
+    The environment should route Windows playback to VB-CABLE, and the Android
+    emulator should enable host microphone access so the app records that audio.
     """
+
     def __init__(self, project_root=None):
         self.project_root = Path(project_root or PROJECT_ROOT)
 
@@ -21,7 +23,7 @@ class AudioInjector:
         if not path.is_absolute():
             path = self.project_root / path
         if not path.exists():
-            raise FileNotFoundError(f"音频文件不存在: {path}")
+            raise FileNotFoundError(f"Audio file does not exist: {path}")
         return path
 
     def resolve_with_fallback(self, file_path, fallback_file=None):
@@ -46,7 +48,7 @@ class AudioInjector:
 
     def play(self, file_path, wait_after=1, fallback_file=None):
         audio_file = self.resolve_with_fallback(file_path, fallback_file=fallback_file)
-        print(f"[AUDIO] play {audio_file}")
+        print(f"[AUDIO] play {audio_file} mode=host")
 
         if shutil.which("ffplay"):
             subprocess.run(

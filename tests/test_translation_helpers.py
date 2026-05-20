@@ -144,3 +144,22 @@ def test_pick_translation_pair_ignores_language_labels_and_translate_button():
 
     assert source_text == "Hello, nice to meet you."
     assert target_text == "你好，很高兴见到你。"
+
+
+def test_resolve_translation_pair_ignores_static_mode_descriptions():
+    texts = [
+        "翻译模式",
+        "双耳机模式",
+        "两人各佩戴一只耳机，实现无缝免提对话。最适合近距离、平等参与的交流。",
+        "手机+耳机模式",
+        "一人通过手机说话，另一人通过耳机说话。非常适合在嘈杂环境中进行面对面交流。",
+        "单向模式",
+        "聆听外部说话者（如讲座、导游）的讲话，实时翻译仅传送到您的耳机。适用于被动聆听。",
+    ]
+    baseline = ["翻译模式"]
+
+    source_text, target_text, snippets = resolve_translation_pair(texts, baseline, "zh", "en")
+
+    assert source_text is None
+    assert target_text is None
+    assert snippets == []

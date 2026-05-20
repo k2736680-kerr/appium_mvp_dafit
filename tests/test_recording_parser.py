@@ -253,7 +253,7 @@ el1.click()
     assert steps[0]["wait_after"] == 4
 
 
-def test_profile_my_account_uses_conditional_coordinate_tap():
+def test_profile_my_account_uses_dynamic_account_entry_tap():
     recording = FakeRecording(
         """
 el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="我的账户")
@@ -265,10 +265,44 @@ el1.click()
     steps, _raw_locators = parse_inspector_python(recording)
 
     assert steps[0]["action"] == "tap_my_account"
-    assert steps[0]["x"] == 918
-    assert steps[0]["y"] == 1273
+    assert "x" not in steps[0]
+    assert "y" not in steps[0]
     assert steps[0]["attempts"] == 6
     assert steps[0]["attempt_wait"] == 1.5
+
+
+def test_language_description_is_weakened_to_name_contains():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\\"日本語\\\\nJapanese\\")")
+el1.click()
+""",
+        stem="语音记录_切换语言",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["locator"] == {
+        "by": "android_uiautomator",
+        "value": 'new UiSelector().descriptionContains("日本語")',
+    }
+
+
+def test_setting_value_description_is_weakened_to_field_name():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\\"语音播报语速\\\\n1.20x\\")")
+el1.click()
+""",
+        stem="语音播报速度切换",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["locator"] == {
+        "by": "android_uiautomator",
+        "value": 'new UiSelector().descriptionContains("语音播报语速")',
+    }
 
 
 def test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked():
@@ -305,7 +339,7 @@ el2.click()
     case_data = recording_to_case(recording)
 
     assert "图片翻译失败" in case_data["blockers"]
-    assert "请重试" in case_data["blockers"]
+    assert "请重试" not in case_data["blockers"]
     assert case_data["recording_meta"]["image_translation"] is False
     assert case_data["recording_meta"]["source_lang"] is None
     assert case_data["recording_meta"]["target_lang"] is None

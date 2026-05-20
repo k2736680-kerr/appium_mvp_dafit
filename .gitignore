@@ -1,8 +1,11 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.generated/
+.tmp/
 *.pyc
 *.log
+bugreport-*.zip
 artifacts/*
 !artifacts/.gitkeep
 reports/*

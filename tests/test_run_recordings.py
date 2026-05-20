@@ -118,6 +118,41 @@ def is_profile_case(title: str) -> bool:
     return any(name in title for name in profile_titles)
 
 
+LANGUAGE_OPTION_LABELS = {
+    "中文",
+    "中文（简体）",
+    "English",
+    "日本語",
+    "한국어",
+}
+
+DYNAMIC_SETTING_FIELDS = {
+    "语音播报语速",
+}
+
+
+def exact_description_lines(value: str) -> list[str]:
+    match = re.search(r'description\("(.+?)"\)', value, re.S)
+    if not match:
+        return []
+    description = match.group(1).replace("\\n", "\n")
+    return [line.strip() for line in description.split("\n") if line.strip()]
+
+
+def description_contains_click_step(field_name: str, name: str, title: str = ""):
+    locator = {
+        "by": "android_uiautomator",
+        "value": f'new UiSelector().descriptionContains("{field_name}")',
+    }
+    return {
+        "action": "click",
+        "name": name,
+        "locator": locator,
+        "timeout": 30,
+        "wait_after": wait_after_click(locator, title),
+    }
+
+
 def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     """
     把已知的、容易不稳定的 Inspector 定位，自动转成坐标点击。
@@ -131,17 +166,33 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     value = locator.get("value", "")
 
     # 个人资料类用例经常会在“提交”后重新进入“我的账户”。
-    # 这个入口的元素点击偶尔被保存成功 toast/页面过渡吞掉，改为条件坐标点击。
+    # 入口在不同状态下纵向位置会变，执行层优先按文案动态定位，再保留重试能力。
     if is_profile_case(title) and by == "accessibility_id" and value == "我的账户":
         return {
             "action": "tap_my_account",
             "name": "进入我的账户",
-            "x": 918,
-            "y": 1273,
             "attempts": 6,
             "attempt_wait": 1.5,
             "wait_after": 2,
         }
+
+    # 语言列表、设置项这类控件经常是“名称\n当前值/英文名”，回放时当前值会变化。
+    # 统一弱化到稳定首行，避免每个页面单独改录制脚本。
+    description_lines = exact_description_lines(value)
+    if len(description_lines) >= 2:
+        stable_name = description_lines[0]
+        if stable_name in LANGUAGE_OPTION_LABELS:
+            return description_contains_click_step(
+                stable_name,
+                f"点击语言：{stable_name}",
+                title,
+            )
+        if stable_name in DYNAMIC_SETTING_FIELDS:
+            return description_contains_click_step(
+                stable_name,
+                f"点击设置项：{stable_name}",
+                title,
+            )
 
     # 个人资料页字段的值会被前序用例修改，不能依赖录制时的完整
     # “字段名\n当前值”。统一弱化为 descriptionContains(字段名)。

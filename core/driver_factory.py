@@ -12,6 +12,8 @@ from appium.options.android import UiAutomator2Options
 
 from core.config import (
     ANDROID_ADB,
+    ANDROID_ALLOW_HOST_AUDIO,
+    ANDROID_AUDIO_BACKEND,
     ANDROID_AUTO_START_EMULATOR,
     ANDROID_AVD,
     ANDROID_BOOT_TIMEOUT_SECONDS,
@@ -126,6 +128,10 @@ def _start_emulator_detached():
         return False
 
     command = [ANDROID_EMULATOR, "-avd", ANDROID_AVD]
+    if ANDROID_ALLOW_HOST_AUDIO:
+        command.append("-allow-host-audio")
+    if ANDROID_AUDIO_BACKEND:
+        command.extend(["-audio", ANDROID_AUDIO_BACKEND])
     print(f"[RECOVERY] Starting Android emulator: {ANDROID_AVD}")
     _start_detached(command, hidden=False)
     return True

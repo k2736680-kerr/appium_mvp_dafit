@@ -8,7 +8,14 @@ from selenium.webdriver.support import expected_conditions as EC
 
 from core.artifacts import ArtifactManager
 from core.audio import AudioInjector
-from core.config import APP_PACKAGE, DEFAULT_TIMEOUT, PROJECT_ROOT
+from core.config import (
+    APP_PACKAGE,
+    AURO_AUTO_LOGIN,
+    AURO_LOGIN_ACCOUNT,
+    AURO_LOGIN_PASSWORD,
+    DEFAULT_TIMEOUT,
+    PROJECT_ROOT,
+)
 from core.locators import to_appium_locator
 from core.translation import (
     AliyunTranslationValidator,
@@ -48,7 +55,6 @@ DEFAULT_BLOCKERS = [
     "发生错误",
     "出错了",
     "请稍后重试",
-    "请重试",
     "无法识别",
     "未能识别",
     "无法翻译",
@@ -74,7 +80,7 @@ class CaseRunner:
         self.translation = AliyunTranslationValidator()
         self.image_translation = AliyunImageTranslationValidator()
         self.blockers = case_data.get("blockers", DEFAULT_BLOCKERS)
-        self.context = {"marked_texts": []}
+        self.context = {"marked_texts": [], "auto_login_attempted": False}
 
     def setup_start_state(self):
         start = self.case.get("start", {})
@@ -184,6 +190,56 @@ class CaseRunner:
                 return keyword
         return None
 
+    def page_has_all(self, page_source, *texts):
+        return all(text in page_source for text in texts)
+
+    def is_account_page(self, page_source):
+        if "我的 Auro" in page_source:
+            return False
+        return "用户名" in page_source and "生日" in page_source and "性别" in page_source
+
+    def is_login_required(self, page_source):
+        return self.page_has_all(page_source, "需要登录", "请登录")
+
+    def is_login_entry_page(self, page_source):
+        return "点击登录" in page_source
+
+    def is_login_form_page(self, page_source):
+        return (
+            "android.widget.EditText" in page_source
+            and "android.widget.CheckBox" in page_source
+            and "登录" in page_source
+        )
+
+    def is_login_page(self, page_source):
+        return self.is_login_entry_page(page_source) or self.is_login_form_page(page_source)
+
+    def is_dual_earbuds_disconnected(self, page_source):
+        return self.page_has_all(page_source, "双耳机模式", "未连接")
+
+    def is_logged_in(self, page_source):
+        if self.is_account_page(page_source):
+            return True
+        return "我的账户" in page_source and "点击登录" not in page_source
+
+    def optional_element(self, locator, timeout=2):
+        try:
+            return self.wait_for_element(locator, timeout=timeout)
+        except TimeoutException:
+            return None
+
+    def click_optional(self, locators, timeout=2):
+        for locator in locators:
+            el = self.optional_element(locator, timeout=timeout)
+            if not el:
+                continue
+            try:
+                el.click()
+            except Exception:
+                self.click_element_center(el)
+            return True
+        return False
+
     def wait_for_element(self, locator, timeout=None):
         by, value = to_appium_locator(locator)
         timeout = timeout or DEFAULT_TIMEOUT
@@ -197,18 +253,23 @@ class CaseRunner:
             raise ValueError("click 步骤缺少 locator")
 
         timeout = step.get("timeout", DEFAULT_TIMEOUT)
-        try:
-            el = self.wait_for_element(locator, timeout=timeout)
-        except TimeoutException:
-            raise AssertionError(f"找不到或无法点击元素: {locator}")
+        for attempt in range(2):
+            try:
+                el = self.wait_for_element(locator, timeout=timeout)
+            except TimeoutException:
+                raise AssertionError(f"找不到或无法点击元素: {locator}")
 
-        click_mode = step.get("click_mode", "element")
-        if click_mode == "center":
-            self.click_element_center(el)
-        else:
-            el.click()
+            click_mode = step.get("click_mode", "element")
+            if click_mode == "center":
+                self.click_element_center(el)
+            else:
+                el.click()
 
-        time.sleep(step.get("wait_after", 1))
+            time.sleep(step.get("wait_after", 1))
+            if attempt == 0 and self.is_login_required(self.driver.page_source):
+                self.ensure_logged_in("click")
+                continue
+            return
 
     def action_input_text(self, step):
         locator = step.get("locator")
@@ -255,10 +316,7 @@ class CaseRunner:
 
     def action_tap_my_account(self, step):
         def is_account_page():
-            source = self.driver.page_source
-            if "我的 Auro" in source:
-                return False
-            return "用户名" in source and "生日" in source and "性别" in source
+            return self.is_account_page(self.driver.page_source)
 
         if is_account_page():
             time.sleep(1)
@@ -268,21 +326,150 @@ class CaseRunner:
             time.sleep(step.get("wait_after", 1))
             return
 
+        if self.is_login_required(self.driver.page_source) or self.is_login_page(self.driver.page_source):
+            self.ensure_logged_in("tap_my_account")
+            if is_account_page():
+                time.sleep(step.get("wait_after", 1))
+                return
+
         attempts = int(step.get("attempts", 4))
         wait_each = float(step.get("attempt_wait", 1.5))
+        locator_timeout = float(step.get("locator_timeout", 3))
         for attempt in range(1, attempts + 1):
             print(f"[TAP_MY_ACCOUNT] 点击入口，第 {attempt}/{attempts} 次")
-            self.driver.execute_script(
-                "mobile: clickGesture",
-                {"x": int(step["x"]), "y": int(step["y"])},
-            )
+            try:
+                el = self.wait_for_element(
+                    {
+                        "by": "android_uiautomator",
+                        "value": 'new UiSelector().descriptionContains("我的账户")',
+                    },
+                    timeout=locator_timeout,
+                )
+                self.click_element_center(el)
+            except TimeoutException:
+                if "x" not in step or "y" not in step:
+                    self.artifacts.save(self.driver, 0, "tap_my_account_entry_not_found")
+                    raise AssertionError("进入我的账户失败：当前页面没有找到“我的账户”入口")
+                self.driver.execute_script(
+                    "mobile: clickGesture",
+                    {"x": int(step["x"]), "y": int(step["y"])},
+                )
             time.sleep(wait_each)
+            if self.is_login_required(self.driver.page_source) or self.is_login_page(self.driver.page_source):
+                self.ensure_logged_in("tap_my_account")
+                continue
             if is_account_page():
                 time.sleep(step.get("wait_after", 1))
                 return
 
         self.artifacts.save(self.driver, 0, "tap_my_account_failed")
         raise AssertionError("进入我的账户失败：多次点击入口后仍未检测到用户名/生日/性别字段")
+
+    def ensure_logged_in(self, reason=""):
+        page_source = self.driver.page_source
+        if self.is_logged_in(page_source):
+            return True
+        if not (self.is_login_required(page_source) or self.is_login_page(page_source)):
+            return False
+        if not AURO_AUTO_LOGIN:
+            self.artifacts.save(self.driver, 0, "auto_login_disabled")
+            raise AssertionError("登录前置失败：AURO_AUTO_LOGIN 已关闭，无法自动恢复未登录状态")
+        if not AURO_LOGIN_ACCOUNT or not AURO_LOGIN_PASSWORD:
+            self.artifacts.save(self.driver, 0, "auto_login_missing_credentials")
+            raise AssertionError(
+                "登录前置失败：缺少 AURO_LOGIN_ACCOUNT/AURO_LOGIN_PASSWORD，"
+                "请在夜跑环境变量中配置测试账号和密码"
+            )
+        if self.context.get("auto_login_attempted"):
+            self.artifacts.save(self.driver, 0, "auto_login_retry_blocked")
+            raise AssertionError("登录前置失败：已经自动登录过一次，仍未恢复到已登录状态")
+
+        self.context["auto_login_attempted"] = True
+        self.perform_login(reason=reason)
+        return True
+
+    def perform_login(self, reason=""):
+        safe_print("[AUTO_LOGIN]", f"reason={reason}")
+        self.artifacts.save(self.driver, 0, "auto_login_before")
+
+        if self.is_login_required(self.driver.page_source):
+            self.driver.press_keycode(4)
+            time.sleep(1)
+
+        if self.is_login_entry_page(self.driver.page_source):
+            clicked = self.click_optional([
+                {"by": "accessibility_id", "value": "点击登录"},
+                {
+                    "by": "android_uiautomator",
+                    "value": 'new UiSelector().descriptionContains("点击登录")',
+                },
+            ])
+            if not clicked:
+                raise AssertionError("登录前置失败：页面显示未登录，但找不到“点击登录”入口")
+            time.sleep(2)
+
+        account_input = self.wait_for_element(
+            {
+                "by": "android_uiautomator",
+                "value": 'new UiSelector().className("android.widget.EditText").instance(0)',
+            },
+            timeout=DEFAULT_TIMEOUT,
+        )
+        password_input = self.wait_for_element(
+            {
+                "by": "android_uiautomator",
+                "value": 'new UiSelector().className("android.widget.EditText").instance(1)',
+            },
+            timeout=DEFAULT_TIMEOUT,
+        )
+
+        account_input.click()
+        try:
+            account_input.clear()
+        except Exception:
+            pass
+        account_input.send_keys(AURO_LOGIN_ACCOUNT)
+
+        password_input.click()
+        try:
+            password_input.clear()
+        except Exception:
+            pass
+        password_input.send_keys(AURO_LOGIN_PASSWORD)
+
+        checkbox = self.optional_element({"by": "class_name", "value": "android.widget.CheckBox"}, timeout=3)
+        if checkbox:
+            try:
+                checked = str(checkbox.get_attribute("checked")).lower() == "true"
+            except Exception:
+                checked = False
+            if not checked:
+                checkbox.click()
+                time.sleep(0.5)
+
+        clicked_login = self.click_optional([
+            {"by": "accessibility_id", "value": "登录"},
+            {
+                "by": "android_uiautomator",
+                "value": 'new UiSelector().descriptionContains("登录")',
+            },
+            {
+                "by": "android_uiautomator",
+                "value": 'new UiSelector().className("android.widget.Button").instance(0)',
+            },
+        ], timeout=5)
+        if not clicked_login:
+            raise AssertionError("登录前置失败：找不到登录按钮")
+
+        try:
+            WebDriverWait(self.driver, DEFAULT_TIMEOUT).until(
+                lambda d: self.is_logged_in(d.page_source)
+            )
+        except TimeoutException:
+            self.artifacts.save(self.driver, 0, "auto_login_failed")
+            raise AssertionError("登录前置失败：已提交登录，但未检测到登录成功状态")
+
+        self.artifacts.save(self.driver, 0, "auto_login_success")
 
     def action_swipe_point(self, step):
         start_x = int(step["start_x"])
@@ -441,6 +628,13 @@ class CaseRunner:
 
         while time.time() < end_time:
             page_source = self.driver.page_source
+            if self.is_dual_earbuds_disconnected(page_source):
+                self.artifacts.save(self.driver, 0, "dual_earbuds_disconnected")
+                raise AssertionError(
+                    "耳机前置失败：当前在双耳机模式，但页面显示未连接。"
+                    "这类用例需要先完成双耳机连接，不能继续等待翻译结果。"
+                )
+
             blocker = self.find_blocker(page_source)
             if blocker:
                 self.artifacts.save(self.driver, 0, "blocked_assert_translation")

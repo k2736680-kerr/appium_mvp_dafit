@@ -42,6 +42,11 @@ DEFAULT_CONFIG = {
     "stop_emulator_after_run": True,
     "emulator_exe": r"E:\android_sdk\emulator\emulator.exe",
     "emulator_avd": "Pixel_8a",
+    "emulator_allow_host_audio": True,
+    "emulator_audio_backend": "dsound",
+    "auro_auto_login": True,
+    "auro_login_account": "",
+    "auro_login_password": "",
     "adb_exe": r"E:\android_sdk\platform-tools\adb.exe",
     "android_udid": "emulator-5554",
     "emulator_boot_timeout_seconds": 240,
@@ -372,7 +377,14 @@ def ensure_emulator(config):
     if not emulator or not avd or not Path(emulator).exists():
         return
 
-    start_detached([emulator, "-avd", avd])
+    command = [emulator, "-avd", avd]
+    if config.get("emulator_allow_host_audio", True):
+        command.append("-allow-host-audio")
+    audio_backend = str(config.get("emulator_audio_backend") or "").strip()
+    if audio_backend:
+        command.extend(["-audio", audio_backend])
+
+    start_detached(command)
     if not wait_for_device_ready(config):
         raise RuntimeError(
             f"Android emulator did not become ready within "
@@ -516,6 +528,13 @@ def run_pytest(config):
     env["ANDROID_AVD"] = str(config.get("emulator_avd") or "")
     env["ANDROID_BOOT_TIMEOUT_SECONDS"] = str(config.get("emulator_boot_timeout_seconds", 240))
     env["ANDROID_AUTO_START_EMULATOR"] = "1" if config.get("start_emulator_if_missing", True) else "0"
+    env["ANDROID_ALLOW_HOST_AUDIO"] = "1" if config.get("emulator_allow_host_audio", True) else "0"
+    env["ANDROID_AUDIO_BACKEND"] = str(config.get("emulator_audio_backend") or "dsound")
+    env["AURO_AUTO_LOGIN"] = "1" if config.get("auro_auto_login", True) else "0"
+    if config.get("auro_login_account"):
+        env["AURO_LOGIN_ACCOUNT"] = str(config["auro_login_account"])
+    if config.get("auro_login_password"):
+        env["AURO_LOGIN_PASSWORD"] = str(config["auro_login_password"])
     command = [
         str(python_exe),
         "-m",
