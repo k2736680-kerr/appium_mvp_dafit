@@ -1,37 +1,55 @@
 # appium_mvp
 
-轻量级 Appium 自动化录制回放项目，当前主流程是：
+轻量级 Appium 录制回放项目。当前主链路只有一条：
 
 1. 用 Appium Inspector 录制 Android 操作。
 2. 把导出的 Python 文件放进 `recordings/`。
-3. 运行 `tests/test_run_recordings.py`。
-4. 框架自动解析 `find_element + click`，执行步骤，保存截图和 XML，生成 pytest-html 报告。
+3. 由 `tests/test_run_recordings.py` 解析并回放。
+4. 框架统一处理启动 App、公共控件适配、音频注入、自动登录、截图/XML、报告归档。
 
-## 目录
+## 目录职责
 
 ```text
 appium_mvp/
-├─ core/
-│  ├─ config.py
-│  ├─ driver_factory.py
-│  ├─ runner.py
-│  ├─ artifacts.py
-│  ├─ audio.py
-│  ├─ locators.py
-│  ├─ recording_rules.py
-│  └─ translation.py
-├─ recordings/
-├─ tests/
-│  ├─ test_run_recordings.py
-│  ├─ test_recording_rules.py
-│  └─ test_translation_helpers.py
-├─ cases/
-├─ artifacts/
-├─ reports/
-└─ assets/audio/
+├─ core/                 # 平台能力：配置、驱动、runner、音频、断言、翻译校验
+├─ recordings/           # Appium Inspector 导出的真实录制用例
+├─ tests/                # pytest 入口和平台能力单测
+├─ scripts/              # 夜跑、报告服务、定时任务安装脚本
+├─ assets/audio/         # 录音/翻译用例注入的 wav 音频
+└─ reports/              # 运行报告和夜跑日志，本地生成，不提交
 ```
 
-## 运行
+临时目录：`.generated/`、`.tmp/`、`.pytest_cache/`、`__pycache__/` 都是运行产物，可以随时删除。
+
+## 本地配置
+
+主要配置在 `core/config.py`，默认值都可以通过环境变量覆盖。
+
+常用环境变量：
+
+```text
+APPIUM_SERVER=http://127.0.0.1:4723
+ANDROID_UDID=emulator-5554
+ANDROID_ADB=E:\android_sdk\platform-tools\adb.exe
+ANDROID_EMULATOR=E:\android_sdk\emulator\emulator.exe
+ANDROID_AVD=Pixel_8a
+ANDROID_ALLOW_HOST_AUDIO=1
+ANDROID_AUDIO_BACKEND=dsound
+AURO_AUTO_LOGIN=1
+AURO_LOGIN_ACCOUNT=<测试账号>
+AURO_LOGIN_PASSWORD=<测试密码>
+```
+
+夜跑的本机配置放在 `scripts/nightly_config.local.json`，它已经在 `.gitignore` 里，不提交远端。这里保存钉钉 webhook、本机报告地址、模拟器启动参数和自动登录账号。
+
+## 手工运行
+
+建议在 CMD 里运行：
+
+```cmd
+cd /d E:\AutoTestTools\Projects\appium_mvp
+call .venv\Scripts\activate.bat
+```
 
 启动 Appium Server：
 
@@ -39,60 +57,67 @@ appium_mvp/
 appium --address 0.0.0.0 --port 4723
 ```
 
-运行全部录制文件：
-
-```powershell
-Remove-Item Env:RECORDING_FILE -ErrorAction SilentlyContinue
-pytest -v .\tests\test_run_recordings.py --html=reports\recording_report.html --self-contained-html
-```
-
-运行单条录制文件：
+检查设备：
 
 ```cmd
-set RECORDING_FILE=recordings\双耳机模式_英文转中文.py
-pytest -v tests\test_run_recordings.py --html=reports\recording_report.html --self-contained-html
+"E:\android_sdk\platform-tools\adb.exe" devices
 ```
 
-## 录制文件标签
+运行全部录制用例：
 
-默认情况下，录制文件只做动作回放。
+```cmd
+set RECORDING_FILE=
+pytest -v .\tests\test_run_recordings.py
+```
 
-- 无标签：只回放操作，例如 `拍照流程.py`
-- `[音频]`：回放 + 自动播放音频，例如 `[音频]会议记录_中文.py`
-- `[翻译]`：回放 + 自动播放音频 + 翻译语义校验，例如 `[翻译]双耳机模式_中文转英文.py`
-- `[P0]` / `[P1]` / `[P2]` / `[P3]`：控制批量执行顺序，P0 最先，未标记的排在 P3 后面
+运行单条录制用例：
 
-`[翻译]` 自动包含 `[音频]` 能力。
+```cmd
+set RECORDING_FILE=recordings\[P0][翻译]单向模式_英文转中文.py
+pytest -v .\tests\test_run_recordings.py
+```
 
-优先级标签可以和功能标签组合，例如：
+HTML 报告参数已经写在 `pytest.ini`，不用再手动追加 `--html`。
+
+## 录制文件规则
+
+只有 `recordings/*.py` 会被批量执行。根目录下散落的录制脚本不会进入主链路。
+
+文件名标签：
 
 ```text
-recordings\[P0][翻译]双耳机模式_英文转中文.py
-recordings\p1_帮助与支持.py
+无标签：只回放动作
+[音频]：回放 + 音频注入
+[翻译]：回放 + 音频注入 + 翻译语义校验
+[P0]/[P1]/[P2]/[P3]：控制批量执行顺序，P0 最先
 ```
 
-## 音频规则
+`[翻译]` 自动包含 `[音频]` 能力。启用音频能力的用例需要保留开始录音和停止录音两个麦克风点击，runner 会在中间插入播放音频步骤。
+
+## 音频方案
+
+当前使用原来的主机虚拟声卡方案，不走 gRPC。
 
 - 音频文件放在 `assets/audio/`
-- 命名规则：`source_zh.wav`、`source_en.wav`、`source_ja.wav`、`source_ko.wav`
-- 根据用例名自动选择源语言音频
-- 目标音频不存在时自动回退 `source_en.wav`
+- 默认文件：`source_zh.wav`、`source_en.wav`、`source_ja.wav`、`source_ko.wav`
+- runner 根据用例名选择音频，找不到时回退到 `source_en.wav`
+- 模拟器启动时使用 `-allow-host-audio -audio dsound`
+- Windows 播放设备需要路由到 VB-CABLE，模拟器麦克风从主机音频获取输入
 
-启用 `[音频]` 或 `[翻译]` 的录制文件需要保留两个麦克风点击：
+## 自动登录
 
-1. 第一次点击：开始录音
-2. 中间自动插入 `play_audio`
-3. 第二次点击：停止录音
+runner 支持按需自动登录。遇到“请登录/需要登录”弹窗或登录页时，会使用测试账号恢复登录，然后回到原动作继续执行。
+
+- `AURO_AUTO_LOGIN=0/false/no` 可关闭
+- 缺少 `AURO_LOGIN_ACCOUNT` 或 `AURO_LOGIN_PASSWORD` 时会明确报“登录前置失败”
+- 自动登录只做未登录恢复，不主动登出，不复用整条“登出和登录”录制用例
+- `recordings/[P0]登出和登录.py` 仍可作为普通录制用例存在
 
 ## 翻译校验
 
-`[翻译]` 用例会在录音结束后：
+`[翻译]` 用例在录音结束后会从页面 XML 提取源文本和目标译文，并调用模型做反向翻译语义判断。
 
-1. 从页面 XML 提取源文本和目标译文
-2. 调用阿里云兼容 OpenAI 的接口做反向翻译
-3. 判断反向翻译与源文本是否语义一致
-
-支持的环境变量：
+模型相关环境变量：
 
 ```text
 DASHSCOPE_API_KEY
@@ -107,19 +132,31 @@ ALIYUN_BASE_URL
 https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
 
-## 当前规则
+## 夜间自动运行
+
+夜跑由 `scripts/nightly_run.py` 负责，Windows 任务计划程序只需要安装一次。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install_nightly_task.ps1
+```
+
+会创建两个任务：
+
+```text
+AppiumMvpReportServer：登录 Windows 时启动报告 HTTP 服务
+AppiumMvpNightlyRun：每天 23:30 运行全部 recordings 用例并按时间窗推送钉钉
+```
+
+夜跑行为：
+
+- 默认每天 23:30 执行
+- 只在 23:30 到次日 05:00 自动推送钉钉
+- 白天手工运行默认不发群，除非显式使用 `--notify always`
+- 报告链接由 `scripts/report_server.py` 常驻提供
+- 跑完后保留报告服务，清理 Appium 和模拟器
+
+## 当前公共规则
 
 - 右上角 `未连接` 不判失败
 - `耳机未连接`、`请连接蓝牙耳机以使用此功能`、`录音权限`、`连接错误`、`解析错误` 等阻断弹窗判失败
-- 现有固定坐标规则仍由框架统一接管，不要求手改录制文件
-
-## 夜间自动运行
-
-可用 `scripts/nightly_run.py` 配合 Windows 任务计划程序做夜间自动回归和钉钉通知。
-
-- 默认每天 23:30 运行全部录制用例
-- 钉钉发送时间窗限制为 23:30 到次日 05:00
-- 白天手工运行不会发群
-- 报告链接由 `scripts/report_server.py` 常驻提供 HTTP 访问
-
-本地 webhook、端口和模拟器配置在 `scripts/nightly_config.local.json`，该文件已忽略，不提交到远端。
+- 固定坐标和动态控件适配集中在解析/runner 层处理，不靠逐个录制文件打补丁
