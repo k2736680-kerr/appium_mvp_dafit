@@ -139,6 +139,9 @@ class CaseRunner:
             seconds = float(step.get("seconds", 1))
             print(f"[SLEEP] {seconds}s")
             time.sleep(seconds)
+        elif action == "hide_keyboard":
+            self.hide_keyboard_if_present()
+            time.sleep(step.get("wait_after", 1))
         elif action == "play_audio":
             pre_delay = float(step.get("pre_delay", 0) or 0)
             if pre_delay > 0:
@@ -207,7 +210,6 @@ class CaseRunner:
     def is_login_form_page(self, page_source):
         return (
             "android.widget.EditText" in page_source
-            and "android.widget.CheckBox" in page_source
             and "登录" in page_source
         )
 
@@ -294,6 +296,13 @@ class CaseRunner:
         x = int(rect["x"] + rect["width"] / 2)
         y = int(rect["y"] + rect["height"] / 2)
         self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+
+    def hide_keyboard_if_present(self):
+        try:
+            self.driver.hide_keyboard()
+            time.sleep(0.5)
+        except Exception:
+            pass
 
     def action_tap_role(self, step):
         role = step.get("role")
@@ -393,7 +402,19 @@ class CaseRunner:
         self.artifacts.save(self.driver, 0, "auto_login_before")
 
         if self.is_login_required(self.driver.page_source):
-            self.driver.press_keycode(4)
+            clicked = self.click_optional([
+                {"by": "accessibility_id", "value": "确定"},
+                {
+                    "by": "android_uiautomator",
+                    "value": 'new UiSelector().descriptionContains("确定")',
+                },
+                {
+                    "by": "android_uiautomator",
+                    "value": 'new UiSelector().className("android.widget.Button").instance(1)',
+                },
+            ], timeout=3)
+            if not clicked:
+                self.driver.press_keycode(4)
             time.sleep(1)
 
         if self.is_login_entry_page(self.driver.page_source):
@@ -436,6 +457,7 @@ class CaseRunner:
         except Exception:
             pass
         password_input.send_keys(AURO_LOGIN_PASSWORD)
+        self.hide_keyboard_if_present()
 
         checkbox = self.optional_element({"by": "class_name", "value": "android.widget.CheckBox"}, timeout=3)
         if checkbox:
@@ -625,15 +647,12 @@ class CaseRunner:
         last_target = None
         last_texts = []
         last_semantic_fail = None
+        saw_dual_earbuds_disconnected = False
 
         while time.time() < end_time:
             page_source = self.driver.page_source
             if self.is_dual_earbuds_disconnected(page_source):
-                self.artifacts.save(self.driver, 0, "dual_earbuds_disconnected")
-                raise AssertionError(
-                    "耳机前置失败：当前在双耳机模式，但页面显示未连接。"
-                    "这类用例需要先完成双耳机连接，不能继续等待翻译结果。"
-                )
+                saw_dual_earbuds_disconnected = True
 
             blocker = self.find_blocker(page_source)
             if blocker:
@@ -707,6 +726,8 @@ class CaseRunner:
         detail = ""
         if last_semantic_fail:
             detail = f" 最后一次语义校验：{last_semantic_fail}"
+        if saw_dual_earbuds_disconnected:
+            detail += " 双耳机页面曾显示未连接；已继续检查页面文本，但未抓到可通过的翻译结果。"
         raise AssertionError(
             "等待翻译结果超时："
             f"source_lang={source_lang}, target_lang={target_lang}, "

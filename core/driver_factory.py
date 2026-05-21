@@ -18,6 +18,8 @@ from core.config import (
     ANDROID_AVD,
     ANDROID_BOOT_TIMEOUT_SECONDS,
     ANDROID_EMULATOR,
+    ANDROID_EMULATOR_EXTRA_ARGS,
+    ANDROID_POST_BOOT_WAIT_SECONDS,
     ANDROID_UDID,
     APPIUM_SERVER,
     APP_ACTIVITY,
@@ -42,6 +44,8 @@ TRANSIENT_SESSION_ERRORS = (
     "cannot be proxied to uiautomator2 server",
     "instrumentation process is not running",
 )
+
+_ANDROID_POST_BOOT_WAIT_DONE = False
 
 
 def _adb_command():
@@ -100,6 +104,7 @@ def android_device_shell_ready(device, timeout=10):
 
 
 def wait_for_android_device_ready(timeout_seconds=None):
+    global _ANDROID_POST_BOOT_WAIT_DONE
     timeout_seconds = int(timeout_seconds or ANDROID_BOOT_TIMEOUT_SECONDS)
     deadline = time.time() + timeout_seconds
     last_state = "not checked"
@@ -113,6 +118,13 @@ def wait_for_android_device_ready(timeout_seconds=None):
         device = _target_device(devices)
         if device:
             if android_device_shell_ready(device, timeout=10):
+                if ANDROID_POST_BOOT_WAIT_SECONDS > 0 and not _ANDROID_POST_BOOT_WAIT_DONE:
+                    print(
+                        "[RECOVERY] Android shell is ready; "
+                        f"waiting {ANDROID_POST_BOOT_WAIT_SECONDS:g}s for launcher/system settle"
+                    )
+                    time.sleep(ANDROID_POST_BOOT_WAIT_SECONDS)
+                    _ANDROID_POST_BOOT_WAIT_DONE = True
                 return True
             last_state = f"device listed but shell not ready: {device}"
         else:
@@ -132,6 +144,8 @@ def _start_emulator_detached():
         command.append("-allow-host-audio")
     if ANDROID_AUDIO_BACKEND:
         command.extend(["-audio", ANDROID_AUDIO_BACKEND])
+    if ANDROID_EMULATOR_EXTRA_ARGS:
+        command.extend(arg for arg in ANDROID_EMULATOR_EXTRA_ARGS.split() if arg)
     print(f"[RECOVERY] Starting Android emulator: {ANDROID_AVD}")
     _start_detached(command, hidden=False)
     return True

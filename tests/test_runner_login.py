@@ -13,6 +13,8 @@ class FakeElement:
         self.text = ""
 
     def click(self):
+        if self.name in {"account", "password"}:
+            self.driver.keyboard_visible = True
         if self.on_click:
             self.on_click()
 
@@ -45,6 +47,8 @@ class FakeLoginDriver:
         self.account = ""
         self.password = ""
         self.checkbox_checked = False
+        self.keyboard_visible = False
+        self.hide_keyboard_calls = 0
         self.clicks = []
         self.keycodes = []
 
@@ -77,7 +81,7 @@ class FakeLoginDriver:
             return FakeElement(self, "account")
         if 'EditText").instance(1)' in value and self.state == "login_form":
             return FakeElement(self, "password")
-        if value == "android.widget.CheckBox" and self.state == "login_form":
+        if value == "android.widget.CheckBox" and self.state == "login_form" and not self.keyboard_visible:
             return FakeElement(self, "checkbox", self.check_agreement)
         if "登录" in value and self.state == "login_form":
             return FakeElement(self, "login_button", self.submit_login)
@@ -94,6 +98,10 @@ class FakeLoginDriver:
         self.keycodes.append(keycode)
         if self.state == "login_required":
             self.state = "login_entry"
+
+    def hide_keyboard(self):
+        self.hide_keyboard_calls += 1
+        self.keyboard_visible = False
 
     def save_screenshot(self, _path):
         return True
@@ -144,6 +152,7 @@ def test_tap_my_account_auto_logs_in_and_retries(monkeypatch, tmp_path):
     assert driver.account == "user@example.com"
     assert driver.password == "secret"
     assert driver.checkbox_checked is True
+    assert driver.hide_keyboard_calls >= 1
     assert runner.context["auto_login_attempted"] is True
 
 

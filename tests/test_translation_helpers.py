@@ -5,6 +5,7 @@ from core.translation import (
     resolve_translation_pair,
     split_mixed_language_text,
 )
+from core.runner import CaseRunner
 
 
 SAMPLE_XML = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
@@ -163,3 +164,41 @@ def test_resolve_translation_pair_ignores_static_mode_descriptions():
     assert source_text is None
     assert target_text is None
     assert snippets == []
+
+
+class FakeTranslationDriver:
+    page_source = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy index="0" class="hierarchy">
+  <android.view.View content-desc="双耳机模式" />
+  <android.view.View content-desc="未连接" />
+  <android.view.View content-desc="我的语言" />
+  <android.view.View content-desc="对方语言" />
+  <android.view.View content-desc="中文" />
+  <android.view.View content-desc="한국어" />
+  <android.view.View content-desc="今天天气很好。&#10;오늘 날씨가 아주 좋습니다." />
+</hierarchy>
+"""
+
+    def save_screenshot(self, _path):
+        return True
+
+
+class PassingTranslationValidator:
+    def validate_translation(self, source_text, target_text, source_lang, target_lang):
+        assert source_text == "今天天气很好。"
+        assert target_text == "오늘 날씨가 아주 좋습니다."
+        return {"pass": True, "reason": "", "back_translation": "今天天气很好。"}
+
+
+def test_assert_translation_uses_text_before_disconnected_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPIUM_ARTIFACTS_ROOT", str(tmp_path))
+    runner = CaseRunner(FakeTranslationDriver(), {"case_id": "unit_dual"})
+    runner.context["marked_texts"] = ["双耳机模式", "未连接", "我的语言", "对方语言", "中文", "한국어"]
+    runner.translation = PassingTranslationValidator()
+
+    runner.action_assert_translation({
+        "source_lang": "zh",
+        "target_lang": "ko",
+        "timeout": 0.1,
+        "poll_interval": 0,
+    })

@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -7,14 +8,48 @@ except ImportError:  # pragma: no cover - non-Windows fallback
     winreg = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_CONFIG_PATH = PROJECT_ROOT / "scripts" / "nightly_config.local.json"
+
+
+def load_local_config() -> dict:
+    if not LOCAL_CONFIG_PATH.exists():
+        return {}
+    try:
+        return json.loads(LOCAL_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+LOCAL_CONFIG = load_local_config()
+
+
+def env_or_local(env_name: str, local_name: str, default=""):
+    value = os.environ.get(env_name)
+    if value not in (None, ""):
+        return value
+    return LOCAL_CONFIG.get(local_name, default)
+
+
+def bool_env_or_local(env_name: str, local_name: str, default=True) -> bool:
+    value = os.environ.get(env_name)
+    if value not in (None, ""):
+        return value.lower() not in {"0", "false", "no"}
+    if local_name in LOCAL_CONFIG:
+        value = LOCAL_CONFIG[local_name]
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() not in {"0", "false", "no"}
+    return default
 
 APPIUM_SERVER = os.environ.get("APPIUM_SERVER", "http://127.0.0.1:4723")
 ANDROID_UDID = os.environ.get("ANDROID_UDID", "emulator-5554")
 ANDROID_ADB = os.environ.get("ANDROID_ADB", r"E:\android_sdk\platform-tools\adb.exe")
 ANDROID_EMULATOR = os.environ.get("ANDROID_EMULATOR", r"E:\android_sdk\emulator\emulator.exe")
 ANDROID_AVD = os.environ.get("ANDROID_AVD", "Pixel_8a")
+ANDROID_EMULATOR_EXTRA_ARGS = os.environ.get("ANDROID_EMULATOR_EXTRA_ARGS", "-no-snapshot-load")
 ANDROID_AUDIO_BACKEND = os.environ.get("ANDROID_AUDIO_BACKEND", "dsound")
 ANDROID_BOOT_TIMEOUT_SECONDS = int(os.environ.get("ANDROID_BOOT_TIMEOUT_SECONDS", "240"))
+ANDROID_POST_BOOT_WAIT_SECONDS = float(os.environ.get("ANDROID_POST_BOOT_WAIT_SECONDS", "0"))
 ANDROID_AUTO_START_EMULATOR = os.environ.get("ANDROID_AUTO_START_EMULATOR", "1").lower() not in {"0", "false", "no"}
 ANDROID_ALLOW_HOST_AUDIO = os.environ.get("ANDROID_ALLOW_HOST_AUDIO", "1").lower() not in {"0", "false", "no"}
 APP_PACKAGE = os.environ.get("APP_PACKAGE", "com.moyoung.auro.ai")
@@ -24,9 +59,9 @@ LAUNCHER_ACTIVITY = os.environ.get("LAUNCHER_ACTIVITY", ".NexusLauncherActivity"
 DEFAULT_TIMEOUT = int(os.environ.get("DEFAULT_TIMEOUT", "30"))
 AUDIO_SETTLE_SECONDS = float(os.environ.get("AUDIO_SETTLE_SECONDS", "4"))
 AUDIO_START_DELAY_SECONDS = float(os.environ.get("AUDIO_START_DELAY_SECONDS", "2"))
-AURO_AUTO_LOGIN = os.environ.get("AURO_AUTO_LOGIN", "1").lower() not in {"0", "false", "no"}
-AURO_LOGIN_ACCOUNT = os.environ.get("AURO_LOGIN_ACCOUNT", "")
-AURO_LOGIN_PASSWORD = os.environ.get("AURO_LOGIN_PASSWORD", "")
+AURO_AUTO_LOGIN = bool_env_or_local("AURO_AUTO_LOGIN", "auro_auto_login", True)
+AURO_LOGIN_ACCOUNT = env_or_local("AURO_LOGIN_ACCOUNT", "auro_login_account", "")
+AURO_LOGIN_PASSWORD = env_or_local("AURO_LOGIN_PASSWORD", "auro_login_password", "")
 
 
 def load_model_api_key() -> str:

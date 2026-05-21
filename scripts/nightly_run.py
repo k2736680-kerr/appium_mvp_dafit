@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,6 +36,7 @@ DEFAULT_CONFIG = {
     "report_base_url": "",
     "start_report_server_if_missing": True,
     "start_appium_if_missing": True,
+    "clean_runtime_before_run": True,
     "stop_appium_after_run": True,
     "appium_command": "appium.cmd",
     "appium_args": ["--address", "0.0.0.0", "--port", "4723"],
@@ -44,12 +46,14 @@ DEFAULT_CONFIG = {
     "emulator_avd": "Pixel_8a",
     "emulator_allow_host_audio": True,
     "emulator_audio_backend": "dsound",
+    "emulator_extra_args": ["-no-snapshot-load"],
     "auro_auto_login": True,
     "auro_login_account": "",
     "auro_login_password": "",
     "adb_exe": r"E:\android_sdk\platform-tools\adb.exe",
     "android_udid": "emulator-5554",
     "emulator_boot_timeout_seconds": 240,
+    "emulator_post_boot_wait_seconds": 25,
     "pytest_timeout_seconds": 14400,
 }
 
@@ -142,6 +146,10 @@ def start_detached(command):
         REPORT_ROOT.mkdir(parents=True, exist_ok=True)
         stdout = open(REPORT_ROOT / "appium_server_stdout.log", "ab")
         stderr = open(REPORT_ROOT / "appium_server_stderr.log", "ab")
+    elif is_emulator:
+        REPORT_ROOT.mkdir(parents=True, exist_ok=True)
+        stdout = open(REPORT_ROOT / "emulator_stdout.log", "ab")
+        stderr = open(REPORT_ROOT / "emulator_stderr.log", "ab")
 
     creationflags = 0
     if os.name == "nt":
@@ -258,6 +266,7 @@ def device_shell_ready(config, timeout=10):
 
 def wait_for_device_ready(config, timeout_seconds=None):
     timeout_seconds = int(timeout_seconds or config.get("emulator_boot_timeout_seconds", 240))
+    post_boot_wait_seconds = float(config.get("emulator_post_boot_wait_seconds", 0) or 0)
     udid = config.get("android_udid")
     deadline = time.time() + timeout_seconds
     last_state = "not checked"
@@ -266,6 +275,12 @@ def wait_for_device_ready(config, timeout_seconds=None):
         devices = adb_devices(config)
         if (udid and udid in devices) or (not udid and devices):
             if device_shell_ready(config, timeout=10):
+                if post_boot_wait_seconds > 0:
+                    print(
+                        "Android emulator shell is ready; "
+                        f"waiting {post_boot_wait_seconds:g}s for launcher/system settle."
+                    )
+                    time.sleep(post_boot_wait_seconds)
                 return True
             last_state = "adb device listed, shell not ready"
         else:
@@ -323,6 +338,19 @@ def stop_appium(config):
         run(["taskkill", "/PID", pid, "/F"], timeout=20)
 
 
+def clean_runtime_before_run(config):
+    if not config.get("clean_runtime_before_run", True):
+        return
+
+    print("Cleaning stale Appium/emulator runtime before nightly run.")
+    for pid in pids_listening_on_port(appium_port_from_config(config)):
+        run(["taskkill", "/PID", pid, "/F"], timeout=20)
+    kill_emulator_processes()
+    adb = config.get("adb_exe") or "adb"
+    run([adb, "kill-server"], timeout=15)
+    run([adb, "start-server"], timeout=15)
+
+
 def stop_emulator(config):
     if not config.get("stop_emulator_after_run", True):
         return
@@ -377,14 +405,30 @@ def ensure_emulator(config):
     if not emulator or not avd or not Path(emulator).exists():
         return
 
+    run([config.get("adb_exe") or "adb", "kill-server"], timeout=15)
+    run([config.get("adb_exe") or "adb", "start-server"], timeout=15)
+
     command = [emulator, "-avd", avd]
     if config.get("emulator_allow_host_audio", True):
         command.append("-allow-host-audio")
     audio_backend = str(config.get("emulator_audio_backend") or "").strip()
     if audio_backend:
         command.extend(["-audio", audio_backend])
+    command.extend(str(arg) for arg in config.get("emulator_extra_args", []))
 
     start_detached(command)
+    if wait_for_device_ready(config):
+        return
+
+    print("Android emulator did not become ready after first launch; retrying without snapshot.")
+    kill_emulator_processes()
+    run([config.get("adb_exe") or "adb", "kill-server"], timeout=15)
+    run([config.get("adb_exe") or "adb", "start-server"], timeout=15)
+
+    retry_command = list(command)
+    if "-no-snapshot-load" not in retry_command:
+        retry_command.append("-no-snapshot-load")
+    start_detached(retry_command)
     if not wait_for_device_ready(config):
         raise RuntimeError(
             f"Android emulator did not become ready within "
@@ -526,7 +570,11 @@ def run_pytest(config):
     env["ANDROID_UDID"] = str(config.get("android_udid") or "")
     env["ANDROID_EMULATOR"] = str(config.get("emulator_exe") or "")
     env["ANDROID_AVD"] = str(config.get("emulator_avd") or "")
+    env["ANDROID_EMULATOR_EXTRA_ARGS"] = " ".join(
+        str(arg) for arg in config.get("emulator_extra_args", [])
+    )
     env["ANDROID_BOOT_TIMEOUT_SECONDS"] = str(config.get("emulator_boot_timeout_seconds", 240))
+    env["ANDROID_POST_BOOT_WAIT_SECONDS"] = str(config.get("emulator_post_boot_wait_seconds", 25))
     env["ANDROID_AUTO_START_EMULATOR"] = "1" if config.get("start_emulator_if_missing", True) else "0"
     env["ANDROID_ALLOW_HOST_AUDIO"] = "1" if config.get("emulator_allow_host_audio", True) else "0"
     env["ANDROID_AUDIO_BACKEND"] = str(config.get("emulator_audio_backend") or "dsound")
@@ -557,6 +605,24 @@ def write_run_log(result):
             result.stdout or "",
             "===== STDERR =====",
             result.stderr or "",
+        ]),
+        encoding="utf-8",
+    )
+    return log_path
+
+
+def write_fatal_log(exc):
+    log_dir = PROJECT_ROOT / "reports" / "nightly_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = now_local().strftime("%Y%m%d_%H%M%S")
+    log_path = log_dir / f"nightly_{stamp}_fatal.log"
+    log_path.write_text(
+        "\n".join([
+            f"exit_code=1",
+            f"fatal_at={now_local().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"exception={type(exc).__name__}: {exc}",
+            "===== TRACEBACK =====",
+            traceback.format_exc(),
         ]),
         encoding="utf-8",
     )
@@ -631,14 +697,20 @@ def main():
         if not should_run:
             return 0
 
-        return run_nightly(args)
+        try:
+            return run_nightly(args)
+        except Exception as exc:
+            log_path = write_fatal_log(exc)
+            print(f"Nightly run failed; fatal log written to {log_path}")
+            raise
 
 
 def run_nightly(args):
     config = load_config()
     report_base_url = ensure_report_server(config)
-    ensure_appium(config)
+    clean_runtime_before_run(config)
     ensure_emulator(config)
+    ensure_appium(config)
     register_runtime_cleanup(config)
 
     result = run_pytest(config)

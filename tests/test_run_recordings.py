@@ -165,6 +165,16 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     by = locator.get("by")
     value = locator.get("value", "")
 
+    if "登出和登录" in title and (
+        by == "android_uiautomator"
+        and 'className("android.widget.Button").instance(0)' in value
+    ):
+        return {
+            "action": "hide_keyboard",
+            "name": "收起登录页键盘",
+            "wait_after": 1,
+        }
+
     # 个人资料类用例经常会在“提交”后重新进入“我的账户”。
     # 入口在不同状态下纵向位置会变，执行层优先按文案动态定位，再保留重试能力。
     if is_profile_case(title) and by == "accessibility_id" and value == "我的账户":
