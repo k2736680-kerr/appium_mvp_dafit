@@ -259,6 +259,9 @@ class CaseRunner:
             try:
                 el = self.wait_for_element(locator, timeout=timeout)
             except TimeoutException:
+                if attempt == 0 and step.get("hide_keyboard_on_retry", True):
+                    self.hide_keyboard_if_present()
+                    continue
                 raise AssertionError(f"找不到或无法点击元素: {locator}")
 
             click_mode = step.get("click_mode", "element")
@@ -289,6 +292,8 @@ class CaseRunner:
         if step.get("clear", False):
             el.clear()
         el.send_keys(text)
+        if step.get("hide_keyboard_after", True):
+            self.hide_keyboard_if_present()
         time.sleep(step.get("wait_after", 1))
 
     def click_element_center(self, el):
@@ -297,12 +302,36 @@ class CaseRunner:
         y = int(rect["y"] + rect["height"] / 2)
         self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
 
+    def is_keyboard_shown(self):
+        checker = getattr(self.driver, "is_keyboard_shown", None)
+        if not checker:
+            return None
+        try:
+            return bool(checker())
+        except Exception:
+            return None
+
     def hide_keyboard_if_present(self):
+        shown_before = self.is_keyboard_shown()
+        if shown_before is False:
+            return False
+
+        attempted = False
         try:
             self.driver.hide_keyboard()
+            attempted = True
             time.sleep(0.5)
         except Exception:
             pass
+
+        if self.is_keyboard_shown() is True:
+            try:
+                self.driver.press_keycode(4)
+                attempted = True
+                time.sleep(0.5)
+            except Exception:
+                pass
+        return attempted
 
     def action_tap_role(self, step):
         role = step.get("role")

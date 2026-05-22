@@ -13,7 +13,7 @@ class FakeElement:
         self.text = ""
 
     def click(self):
-        if self.name in {"account", "password"}:
+        if self.name in {"account", "password", "message"}:
             self.driver.keyboard_visible = True
         if self.on_click:
             self.on_click()
@@ -27,6 +27,8 @@ class FakeElement:
             self.driver.account = self.text
         if self.name == "password":
             self.driver.password = self.text
+        if self.name == "message":
+            self.driver.message = self.text
 
     def get_attribute(self, name):
         if name == "checked":
@@ -103,6 +105,9 @@ class FakeLoginDriver:
         self.hide_keyboard_calls += 1
         self.keyboard_visible = False
 
+    def is_keyboard_shown(self):
+        return self.keyboard_visible
+
     def save_screenshot(self, _path):
         return True
 
@@ -121,6 +126,52 @@ class FakeLoginDriver:
 
     def open_account_page(self):
         self.state = "account_page"
+
+
+class FakeFormDriver:
+    def __init__(self):
+        self.keyboard_visible = False
+        self.hide_keyboard_calls = 0
+        self.keycodes = []
+        self.message = ""
+        self.submitted = False
+
+    @property
+    def page_source(self):
+        if self.keyboard_visible:
+            return '<hierarchy><android.widget.EditText focused="true" /></hierarchy>'
+        return (
+            '<hierarchy><android.widget.EditText />'
+            '<node content-desc="submit" /></hierarchy>'
+        )
+
+    def find_element(self, _by, value):
+        if value == "android.widget.EditText":
+            return FakeElement(self, "message")
+        if value == "submit" and not self.keyboard_visible:
+            return FakeElement(self, "submit", self.submit)
+        raise NoSuchElementException(value)
+
+    def hide_keyboard(self):
+        self.hide_keyboard_calls += 1
+        self.keyboard_visible = False
+
+    def is_keyboard_shown(self):
+        return self.keyboard_visible
+
+    def press_keycode(self, keycode):
+        self.keycodes.append(keycode)
+        if keycode == 4 and self.keyboard_visible:
+            self.keyboard_visible = False
+
+    def save_screenshot(self, _path):
+        return True
+
+    def get_screenshot_as_base64(self):
+        return "fake-screenshot-base64"
+
+    def submit(self):
+        self.submitted = True
 
 
 @pytest.fixture(autouse=True)
@@ -154,6 +205,39 @@ def test_tap_my_account_auto_logs_in_and_retries(monkeypatch, tmp_path):
     assert driver.checkbox_checked is True
     assert driver.hide_keyboard_calls >= 1
     assert runner.context["auto_login_attempted"] is True
+
+
+def test_input_text_hides_keyboard_by_default(monkeypatch, tmp_path):
+    driver = FakeFormDriver()
+    runner = make_runner(monkeypatch, tmp_path, driver)
+
+    runner.action_input_text({
+        "action": "input_text",
+        "locator": {"by": "class_name", "value": "android.widget.EditText"},
+        "text": "123123",
+        "timeout": 0.1,
+        "wait_after": 0,
+    })
+
+    assert driver.message == "123123"
+    assert driver.keyboard_visible is False
+    assert driver.hide_keyboard_calls == 1
+
+
+def test_click_retries_after_hiding_keyboard(monkeypatch, tmp_path):
+    driver = FakeFormDriver()
+    driver.keyboard_visible = True
+    runner = make_runner(monkeypatch, tmp_path, driver)
+
+    runner.action_click({
+        "action": "click",
+        "locator": {"by": "accessibility_id", "value": "submit"},
+        "timeout": 0.1,
+        "wait_after": 0,
+    })
+
+    assert driver.submitted is True
+    assert driver.hide_keyboard_calls == 1
 
 
 def test_auto_login_requires_env_credentials(monkeypatch, tmp_path):
