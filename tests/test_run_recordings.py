@@ -139,18 +139,26 @@ def exact_description_lines(value: str) -> list[str]:
     return [line.strip() for line in description.split("\n") if line.strip()]
 
 
-def description_contains_click_step(field_name: str, name: str, title: str = ""):
+def description_contains_click_step(
+    field_name: str,
+    name: str,
+    title: str = "",
+    fallback_tap: dict | None = None,
+):
     locator = {
         "by": "android_uiautomator",
         "value": f'new UiSelector().descriptionContains("{field_name}")',
     }
-    return {
+    step = {
         "action": "click",
         "name": name,
         "locator": locator,
         "timeout": 30,
         "wait_after": wait_after_click(locator, title),
     }
+    if fallback_tap:
+        step["fallback_tap"] = fallback_tap
+    return step
 
 
 def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
@@ -261,20 +269,42 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     # 翻译模式页 - 开始双耳机模式
     if by == "accessibility_id" and value == "开始双耳机模式":
         return {
-            "action": "tap_point",
+            "action": "click",
             "name": "点击翻译模式页-开始双耳机模式",
-            "x": 540,
-            "y": 733,
+            "locator": {
+                "by": "accessibility_id",
+                "value": "开始双耳机模式",
+            },
+            "timeout": 30,
+            "fallback_tap": {"x": 540, "y": 733},
             "wait_after": 1
         }
 
     # 翻译模式页 - 开始手机模式
     if by == "accessibility_id" and value == "开始手机模式":
         return {
-            "action": "tap_point",
+            "action": "click",
             "name": "点击翻译模式页-开始手机模式",
-            "x": 540,
-            "y": 1298,
+            "locator": {
+                "by": "accessibility_id",
+                "value": "开始手机模式",
+            },
+            "timeout": 30,
+            "fallback_tap": {"x": 540, "y": 735},
+            "wait_after": 1
+        }
+
+    # 翻译模式页 - 开始单向模式
+    if by == "accessibility_id" and value == "开始单向模式":
+        return {
+            "action": "click",
+            "name": "点击翻译模式页-开始单向模式",
+            "locator": {
+                "by": "accessibility_id",
+                "value": "开始单向模式",
+            },
+            "timeout": 30,
+            "fallback_tap": {"x": 540, "y": 1298},
             "wait_after": 1
         }
 
@@ -305,22 +335,20 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     # 睡眠中心音频卡片的完整 description 会随内容/加载状态变化，
     # 例如录制时是“放松心灵\n11 min”，回放时可能只剩“放松心灵”。
     if "睡眠中心_切换" in title and 'description("放松心灵\\n11 min")' in value:
-        return {
-            "action": "tap_point",
-            "name": "点击睡眠中心-当前音频卡片",
-            "x": 540,
-            "y": 760,
-            "wait_after": 1
-        }
+        return description_contains_click_step(
+            "放松心灵",
+            "点击睡眠中心-当前音频卡片",
+            title,
+            fallback_tap={"x": 540, "y": 760},
+        )
 
     if "睡眠中心_切换" in title and 'description("喜好意识\\n10 min")' in value:
-        return {
-            "action": "tap_point",
-            "name": "点击睡眠中心-当前音频卡片",
-            "x": 540,
-            "y": 760,
-            "wait_after": 1
-        }
+        return description_contains_click_step(
+            "喜好意识",
+            "点击睡眠中心-当前音频卡片",
+            title,
+            fallback_tap={"x": 540, "y": 760},
+        )
 
     return None
 
@@ -410,6 +438,7 @@ def parse_inspector_python(py_file: Path):
     title = py_file.stem if hasattr(py_file, "stem") else ""
 
     elements = {}
+    clear_events = []
 
     find_pattern = re.compile(
         r"(?P<var>\w+)\s*=\s*driver\.find_element\(\s*"
@@ -427,6 +456,16 @@ def parse_inspector_python(py_file: Path):
             "by": by,
             "value": value
         }
+
+    clear_pattern = re.compile(r"(?P<var>\w+)\.clear\(\)")
+    for m in clear_pattern.finditer(text):
+        var = m.group("var")
+        if var not in elements:
+            continue
+        clear_events.append({
+            "position": m.start(),
+            "locator": elements[var],
+        })
 
     events = []
     raw_locators_in_click_order = []
@@ -479,6 +518,11 @@ def parse_inspector_python(py_file: Path):
                 "name": f"输入文本：{input_text}",
                 "locator": locator,
                 "text": input_text,
+                "clear": any(
+                    event["position"] < m.start()
+                    and event["locator"] == locator
+                    for event in clear_events
+                ),
                 "timeout": 30,
                 "wait_after": 1,
             },
@@ -488,6 +532,18 @@ def parse_inspector_python(py_file: Path):
     events.extend(parse_swipe_events(text))
     events.sort(key=lambda item: item["position"])
     steps = [item["step"] for item in events]
+    for index, step in enumerate(steps[:-1]):
+        next_step = steps[index + 1]
+        if step.get("action") != "input_text":
+            continue
+        if next_step.get("action") != "click":
+            continue
+        next_locator = next_step.get("locator") or {}
+        if (
+            next_locator.get("by") == "accessibility_id"
+            and next_locator.get("value") in ("确定", "提交")
+        ):
+            step["hide_keyboard_after"] = False
 
     return steps, raw_locators_in_click_order
 

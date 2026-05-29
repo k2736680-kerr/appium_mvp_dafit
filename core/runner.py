@@ -262,6 +262,19 @@ class CaseRunner:
                 if attempt == 0 and step.get("hide_keyboard_on_retry", True):
                     self.hide_keyboard_if_present()
                     continue
+                if step.get("fallback_tap"):
+                    fallback = step["fallback_tap"]
+                    print(
+                        "[CLICK_FALLBACK]",
+                        f"locator not found: {locator};",
+                        f"tap ({fallback['x']},{fallback['y']})",
+                    )
+                    self.driver.execute_script(
+                        "mobile: clickGesture",
+                        {"x": int(fallback["x"]), "y": int(fallback["y"])},
+                    )
+                    time.sleep(step.get("wait_after", 1))
+                    return
                 raise AssertionError(f"找不到或无法点击元素: {locator}")
 
             click_mode = step.get("click_mode", "element")

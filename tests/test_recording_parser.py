@@ -101,9 +101,41 @@ el2.click()
 
     steps, raw_locators = parse_inspector_python(recording)
 
-    assert [step["action"] for step in steps] == ["tap_point", "swipe_point", "click"]
+    assert [step["action"] for step in steps] == ["click", "swipe_point", "click"]
+    assert steps[0]["locator"] == {"by": "accessibility_id", "value": "开始双耳机模式"}
+    assert steps[0]["fallback_tap"] == {"x": 540, "y": 733}
     assert steps[1]["name"] == "滑动：上滑 (514,1372) -> (520,766)"
     assert [locator["value"] for locator in raw_locators] == ["开始双耳机模式", "关闭"]
+
+
+def test_parse_phone_mode_entry_prefers_text_with_coordinate_fallback():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="开始手机模式")
+el1.click()
+""",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["action"] == "click"
+    assert steps[0]["locator"] == {"by": "accessibility_id", "value": "开始手机模式"}
+    assert steps[0]["fallback_tap"] == {"x": 540, "y": 735}
+
+
+def test_parse_single_mode_entry_prefers_text_with_coordinate_fallback():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="开始单向模式")
+el1.click()
+""",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["action"] == "click"
+    assert steps[0]["locator"] == {"by": "accessibility_id", "value": "开始单向模式"}
+    assert steps[0]["fallback_tap"] == {"x": 540, "y": 1298}
 
 
 def test_parse_inspector_python_keeps_click_and_tap_order():
@@ -303,6 +335,25 @@ el1.click()
         "by": "android_uiautomator",
         "value": 'new UiSelector().descriptionContains("语音播报语速")',
     }
+
+
+def test_sleep_center_card_prefers_text_with_coordinate_fallback():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\\"放松心灵\\\\n11 min\\")")
+el1.click()
+""",
+        stem="睡眠中心_切换",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["action"] == "click"
+    assert steps[0]["locator"] == {
+        "by": "android_uiautomator",
+        "value": 'new UiSelector().descriptionContains("放松心灵")',
+    }
+    assert steps[0]["fallback_tap"] == {"x": 540, "y": 760}
 
 
 def test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked():

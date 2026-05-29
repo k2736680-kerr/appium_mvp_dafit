@@ -1,0 +1,13 @@
+el5 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\"图片翻译\n拍摄并翻译\")")
+el5.click()
+el6 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="English")
+el6.click()
+el7 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\"한국어\nKorean\")")
+el7.click()
+el8 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(7)")
+el8.click()
+el9 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.view.View\").instance(24)")
+el9.click()
+el10 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\"android.widget.Button\").instance(6)")
+el10.click()
+
