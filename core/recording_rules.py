@@ -22,6 +22,10 @@ LANGUAGE_NAME_TO_CODE = {
     "韩语": "ko",
 }
 
+LANGUAGE_AUDIO_START_DELAYS = {
+    "ja": 4.0,
+}
+
 
 def strip_case_tags(title: str) -> str:
     clean_title = PRIORITY_TAG_PATTERN.sub("", title, count=1)
@@ -76,6 +80,10 @@ def infer_audio_language(title: str, enable_translation: bool = False) -> str:
         return matched[0][1]
 
     return "en"
+
+
+def audio_start_delay_seconds(audio_lang: str) -> float:
+    return max(AUDIO_START_DELAY_SECONDS, LANGUAGE_AUDIO_START_DELAYS.get(audio_lang, 0))
 
 
 def is_mic_step(step: dict) -> bool:
@@ -166,7 +174,7 @@ def build_audio_step(audio_lang: str) -> dict:
         "name": f"播放测试音频({audio_lang})",
         "file": f"assets/audio/source_{audio_lang}.wav",
         "fallback_file": "assets/audio/source_en.wav",
-        "pre_delay": AUDIO_START_DELAY_SECONDS,
+        "pre_delay": audio_start_delay_seconds(audio_lang),
         "wait_after": 0,
     }
 

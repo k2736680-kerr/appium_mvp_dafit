@@ -66,6 +66,26 @@ def test_augment_recording_steps_for_translation():
     assert metadata["target_lang"] == "en"
 
 
+def test_augment_recording_steps_uses_longer_audio_start_delay_for_japanese():
+    steps = [
+        {"action": "tap_point", "name": "点击首页-翻译中心"},
+        {"action": "tap_point", "name": "点击底部麦克风按钮"},
+        {"action": "tap_point", "name": "点击底部麦克风按钮"},
+    ]
+
+    augmented_steps, metadata = augment_recording_steps(
+        "[翻译]单向模式_日文转英文",
+        steps,
+        enable_audio=True,
+        enable_translation=True,
+    )
+
+    play_step = next(step for step in augmented_steps if step["action"] == "play_audio")
+    assert play_step["file"] == "assets/audio/source_ja.wav"
+    assert play_step["pre_delay"] == 4.0
+    assert metadata["audio_lang"] == "ja"
+
+
 def test_augment_recording_steps_accepts_explicit_close_action():
     steps = [
         {"action": "tap_point", "name": "点击底部麦克风按钮"},
