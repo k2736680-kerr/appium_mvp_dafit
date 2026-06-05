@@ -40,7 +40,7 @@ AURO_LOGIN_ACCOUNT=<测试账号>
 AURO_LOGIN_PASSWORD=<测试密码>
 ```
 
-夜跑的本机配置放在 `scripts/nightly_config.local.json`，它已经在 `.gitignore` 里，不提交远端。这里保存钉钉 webhook、本机报告地址、模拟器启动参数和自动登录账号。
+夜跑的本机配置放在 `scripts/nightly_config.local.json`，它已经在 `.gitignore` 里，不提交远端。这里保存钉钉 webhook、七牛上传密钥、本机报告地址、模拟器启动参数和自动登录账号。
 
 ## 手工运行
 
@@ -152,8 +152,26 @@ AppiumMvpNightlyRun：每天 23:30 运行全部 recordings 用例并按时间窗
 - 默认每天 23:30 执行
 - 只在 23:30 到次日 05:00 自动推送钉钉
 - 白天手工运行默认不发群，除非显式使用 `--notify always`
-- 报告链接由 `scripts/report_server.py` 常驻提供
+- 如果配置了七牛上传，钉钉报告链接会使用七牛域名
+- 如果未配置七牛上传，报告链接由 `scripts/report_server.py` 常驻提供
 - 跑完后保留报告服务，清理 Appium 和模拟器
+
+七牛报告上传配置示例：
+
+```json
+{
+  "qiniu_access_key": "<七牛 AccessKey>",
+  "qiniu_secret_key": "<七牛 SecretKey>",
+  "qiniu_bucket": "<七牛存储空间名称>",
+  "qiniu_domain": "https://qcdn.moyoung.com",
+  "qiniu_region": "华东-浙江",
+  "qiniu_prefix": "auroai/appium-reports",
+  "qiniu_upload_scope": "failed_only",
+  "qiniu_upload_xml": false
+}
+```
+
+`qiniu_bucket` 是七牛控制台里的存储空间名称，不是目录路径。要上传到根目录下的 `auroai/` 目录，应把 `qiniu_prefix` 配成 `auroai/appium-reports`。
 
 ## 当前公共规则
 

@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0.."
-".venv\Scripts\python.exe" "scripts\report_server.py" --host 0.0.0.0 --port 8876
+powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start_report_server.ps1" -HostName 0.0.0.0 -Port 8876

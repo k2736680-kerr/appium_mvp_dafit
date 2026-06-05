@@ -7,8 +7,10 @@ import hashlib
 import hmac
 import html
 import json
+import mimetypes
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -55,6 +57,19 @@ DEFAULT_CONFIG = {
     "emulator_boot_timeout_seconds": 240,
     "emulator_post_boot_wait_seconds": 25,
     "pytest_timeout_seconds": 14400,
+    "qiniu_access_key": "",
+    "qiniu_secret_key": "",
+    "qiniu_bucket": "",
+    "qiniu_domain": "",
+    "qiniu_region": "z0",
+    "qiniu_upload_url": "",
+    "qiniu_prefix": "appium-reports",
+    "qiniu_upload_scope": "failed_only",
+    "qiniu_upload_xml": False,
+    "qiniu_upload_timeout_seconds": 60,
+    "qiniu_upload_retries": 2,
+    "qiniu_upload_retry_backoff_seconds": 3,
+    "qiniu_fallback_to_local_report": True,
 }
 
 
@@ -294,8 +309,15 @@ def wait_for_device_ready(config, timeout_seconds=None):
 def kill_emulator_processes():
     if os.name != "nt":
         return
-    run(["taskkill", "/IM", "emulator.exe", "/F"], timeout=20)
-    run(["taskkill", "/IM", "qemu-system-x86_64.exe", "/F"], timeout=20)
+    for image_name in (
+        "emulator.exe",
+        "qemu-system-x86_64.exe",
+        "qemu-system-i386.exe",
+        "qemu-system-aarch64.exe",
+    ):
+        result = run(["taskkill", "/IM", image_name, "/T", "/F"], timeout=20)
+        if result.returncode == 0:
+            print(f"Stopped stale process tree: {image_name}")
 
 
 def appium_port_from_config(config):
@@ -335,7 +357,9 @@ def stop_appium(config):
         return
 
     for pid in pids_listening_on_port(appium_port_from_config(config)):
-        run(["taskkill", "/PID", pid, "/F"], timeout=20)
+        result = run(["taskkill", "/PID", pid, "/T", "/F"], timeout=20)
+        if result.returncode == 0:
+            print(f"Stopped Appium process tree on port {appium_port_from_config(config)}: pid={pid}")
 
 
 def clean_runtime_before_run(config):
@@ -344,11 +368,14 @@ def clean_runtime_before_run(config):
 
     print("Cleaning stale Appium/emulator runtime before nightly run.")
     for pid in pids_listening_on_port(appium_port_from_config(config)):
-        run(["taskkill", "/PID", pid, "/F"], timeout=20)
+        result = run(["taskkill", "/PID", pid, "/T", "/F"], timeout=20)
+        if result.returncode == 0:
+            print(f"Stopped stale Appium process tree: pid={pid}")
     kill_emulator_processes()
     adb = config.get("adb_exe") or "adb"
     run([adb, "kill-server"], timeout=15)
     run([adb, "start-server"], timeout=15)
+    time.sleep(2)
 
 
 def stop_emulator(config):
@@ -460,6 +487,16 @@ def report_link(bundle_dir, base_url):
     return f"{base_url}/{urllib.parse.quote(relative)}"
 
 
+def _safe_case_id(name: str) -> str:
+    result = []
+    for ch in name:
+        if ch.isalnum() or ch in "_-":
+            result.append(ch)
+        else:
+            result.append("_")
+    return "".join(result).strip("_") or "recording_case"
+
+
 def failed_cases_from_report(bundle_dir, limit=8):
     report_path = bundle_dir / "recording_report.html"
     if not report_path.exists():
@@ -477,9 +514,213 @@ def failed_cases_from_report(bundle_dir, limit=8):
         name = html.unescape(match.group(2)).strip()
         name = re.sub(r"\s+", " ", name)
         cases.append({"status": status, "name": name})
-        if len(cases) >= limit:
+        if limit is not None and len(cases) >= limit:
             break
     return cases
+
+
+def qiniu_requested(config):
+    keys = (
+        "qiniu_access_key",
+        "qiniu_secret_key",
+        "qiniu_bucket",
+        "qiniu_domain",
+        "qiniu_upload_url",
+    )
+    return bool(config.get("qiniu_enabled")) or any(str(config.get(key) or "").strip() for key in keys)
+
+
+def normalize_qiniu_region(region):
+    value = str(region or "z0").strip()
+    aliases = {
+        "华东": "z0",
+        "华东-浙江": "z0",
+        "华东浙江": "z0",
+        "华北": "z1",
+        "华南": "z2",
+        "北美": "na0",
+        "东南亚": "as0",
+    }
+    return aliases.get(value, value)
+
+
+def qiniu_upload_url(config):
+    explicit = str(config.get("qiniu_upload_url") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    region = normalize_qiniu_region(config.get("qiniu_region"))
+    endpoints = {
+        "z0": "https://upload-z0.qiniup.com",
+        "z1": "https://upload-z1.qiniup.com",
+        "z2": "https://upload-z2.qiniup.com",
+        "na0": "https://upload-na0.qiniup.com",
+        "as0": "https://upload-as0.qiniup.com",
+    }
+    if region not in endpoints:
+        raise RuntimeError(
+            f"未知七牛区域 {config.get('qiniu_region')!r}，请配置 qiniu_upload_url 明确上传入口。"
+        )
+    return endpoints[region]
+
+
+def normalize_qiniu_prefix(prefix):
+    parts = [item for item in str(prefix or "").replace("\\", "/").split("/") if item]
+    return "/".join(parts)
+
+
+def validate_qiniu_config(config):
+    required = ("qiniu_access_key", "qiniu_secret_key", "qiniu_bucket", "qiniu_domain")
+    missing = [key for key in required if not str(config.get(key) or "").strip()]
+    if missing:
+        raise RuntimeError(f"七牛上传配置缺失：{', '.join(missing)}")
+
+    bucket = str(config["qiniu_bucket"]).strip()
+    if "/" in bucket:
+        raise RuntimeError(
+            "qiniu_bucket 是七牛存储空间名称，不是目录路径；"
+            "如果要上传到根目录下的 auroai/，请把 qiniu_prefix 配成 auroai/appium-reports。"
+        )
+
+
+def qiniu_urlsafe_base64(data):
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return base64.urlsafe_b64encode(data).decode("ascii")
+
+
+def qiniu_upload_token(config, key):
+    deadline = int(time.time()) + 3600
+    policy = {
+        "scope": f"{config['qiniu_bucket']}:{key}",
+        "deadline": deadline,
+    }
+    policy_json = json.dumps(policy, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    encoded_policy = qiniu_urlsafe_base64(policy_json)
+    digest = hmac.new(
+        str(config["qiniu_secret_key"]).encode("utf-8"),
+        encoded_policy.encode("ascii"),
+        hashlib.sha1,
+    ).digest()
+    encoded_sign = qiniu_urlsafe_base64(digest)
+    return f"{config['qiniu_access_key']}:{encoded_sign}:{encoded_policy}"
+
+
+def multipart_form_data(fields, file_field, file_path):
+    boundary = f"----appium-mvp-{int(time.time() * 1000)}-{os.getpid()}"
+    body = bytearray()
+    for name, value in fields.items():
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        body.extend(str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+
+    content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend(
+        (
+            f'Content-Disposition: form-data; name="{file_field}"; '
+            f'filename="{file_path.name}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode("utf-8")
+    )
+    body.extend(file_path.read_bytes())
+    body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+    return bytes(body), f"multipart/form-data; boundary={boundary}"
+
+
+def qiniu_upload_file(config, file_path, key):
+    token = qiniu_upload_token(config, key)
+    body, content_type = multipart_form_data(
+        {"token": token, "key": key},
+        "file",
+        file_path,
+    )
+    upload_url = qiniu_upload_url(config)
+    timeout = int(config.get("qiniu_upload_timeout_seconds", 60))
+    retries = max(0, int(config.get("qiniu_upload_retries", 2)))
+    attempts = retries + 1
+    backoff_seconds = float(config.get("qiniu_upload_retry_backoff_seconds", 3))
+
+    for attempt in range(1, attempts + 1):
+        request = urllib.request.Request(
+            upload_url,
+            data=body,
+            headers={"Content-Type": content_type},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                result_body = response.read().decode("utf-8", errors="replace")
+                if response.status >= 400:
+                    raise RuntimeError(f"七牛上传失败 HTTP {response.status}: {result_body}")
+                return json.loads(result_body) if result_body else {}
+        except Exception as exc:
+            if attempt >= attempts:
+                raise
+            print(
+                "Qiniu upload failed; retrying "
+                f"({attempt}/{attempts}) key={key}: {type(exc).__name__}: {exc}"
+            )
+            if backoff_seconds > 0:
+                time.sleep(backoff_seconds)
+
+    raise RuntimeError(f"七牛上传失败且未返回结果: {key}")
+
+
+def copy_qiniu_publish_bundle(bundle_dir, config, failed_cases):
+    publish_dir = REPORT_ROOT / "qiniu_publish" / bundle_dir.name
+    if publish_dir.exists():
+        shutil.rmtree(publish_dir)
+    publish_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in ("recording_report.html", "archive_manifest.json"):
+        source = bundle_dir / name
+        if source.exists():
+            shutil.copy2(source, publish_dir / name)
+
+    scope = str(config.get("qiniu_upload_scope") or "failed_only").lower()
+    upload_xml = bool(config.get("qiniu_upload_xml", False))
+    artifacts_dir = bundle_dir / "artifacts"
+    publish_artifacts_dir = publish_dir / "artifacts"
+
+    if scope == "all":
+        if artifacts_dir.exists():
+            ignore = None if upload_xml else shutil.ignore_patterns("*.xml")
+            shutil.copytree(artifacts_dir, publish_artifacts_dir, ignore=ignore)
+    elif scope == "failed_only":
+        for item in failed_cases:
+            case_dir = artifacts_dir / _safe_case_id(item["name"])
+            if not case_dir.exists():
+                continue
+            target_dir = publish_artifacts_dir / case_dir.name
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for path in case_dir.iterdir():
+                if path.is_file() and (upload_xml or path.suffix.lower() != ".xml"):
+                    shutil.copy2(path, target_dir / path.name)
+    else:
+        raise RuntimeError("qiniu_upload_scope 只支持 failed_only 或 all")
+
+    return publish_dir
+
+
+def upload_report_to_qiniu(bundle_dir, config, failed_cases):
+    validate_qiniu_config(config)
+    publish_dir = copy_qiniu_publish_bundle(bundle_dir, config, failed_cases)
+    prefix = normalize_qiniu_prefix(config.get("qiniu_prefix"))
+    base_key = "/".join(part for part in (prefix, bundle_dir.name) if part)
+
+    files = sorted(path for path in publish_dir.rglob("*") if path.is_file())
+    for index, path in enumerate(files, start=1):
+        relative = path.relative_to(publish_dir).as_posix()
+        key = f"{base_key}/{relative}" if base_key else relative
+        print(f"Uploading report file to Qiniu ({index}/{len(files)}): {key}")
+        qiniu_upload_file(config, path, key)
+
+    report_key = f"{base_key}/recording_report.html" if base_key else "recording_report.html"
+    domain = str(config["qiniu_domain"]).strip().rstrip("/")
+    return f"{domain}/{urllib.parse.quote(report_key, safe='/')}"
 
 
 def signed_webhook(config):
@@ -497,7 +738,7 @@ def signed_webhook(config):
     return f"{webhook}{separator}timestamp={timestamp}&sign={sign}"
 
 
-def dingtalk_markdown(config, manifest, link, exit_code, failed_cases=None):
+def dingtalk_markdown(config, manifest, link, exit_code, failed_cases=None, report_note=None):
     total = int(manifest.get("total", 0))
     passed = int(manifest.get("passed", 0))
     failed = int(manifest.get("failed", 0)) + int(manifest.get("errors", 0))
@@ -528,6 +769,8 @@ def dingtalk_markdown(config, manifest, link, exit_code, failed_cases=None):
         "",
         f"📊 [点击查看完整报告]({link})",
     ]
+    if report_note:
+        lines.append(f"报告链路说明：{report_note}")
     if report_id:
         lines.append(f"归档编号：{report_id}")
 
@@ -707,7 +950,9 @@ def main():
 
 def run_nightly(args):
     config = load_config()
-    report_base_url = ensure_report_server(config)
+    report_base_url = None
+    if not qiniu_requested(config):
+        report_base_url = ensure_report_server(config)
     clean_runtime_before_run(config)
     ensure_emulator(config)
     ensure_appium(config)
@@ -721,13 +966,30 @@ def run_nightly(args):
         raise RuntimeError("没有找到 recording_report_bundle_*，无法生成钉钉报告链接")
 
     manifest = read_manifest(bundle)
-    link = report_link(bundle, report_base_url)
+    failed_cases = failed_cases_from_report(bundle, limit=None)
+    report_note = None
+    if qiniu_requested(config):
+        try:
+            link = upload_report_to_qiniu(bundle, config, failed_cases)
+        except Exception as exc:
+            if not bool(config.get("qiniu_fallback_to_local_report", True)):
+                raise
+            print(
+                "Qiniu report upload failed; falling back to local report link: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            report_base_url = report_base_url or ensure_report_server(config)
+            link = report_link(bundle, report_base_url)
+            report_note = f"七牛上传失败，已降级为本机报告链接（{type(exc).__name__}: {exc}）"
+    else:
+        link = report_link(bundle, report_base_url)
     payload = dingtalk_markdown(
         config,
         manifest,
         link,
         result.returncode,
-        failed_cases=failed_cases_from_report(bundle),
+        failed_cases=failed_cases[:8],
+        report_note=report_note,
     )
 
     should_send = args.notify == "always" or (

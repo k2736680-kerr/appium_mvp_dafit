@@ -253,6 +253,41 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
             "wait_after": 1
         }
 
+    # 会议记录名称是按生成时间变化的，不要依赖录制时的固定标题。
+    # 先按标题前缀找当前记录，找不到再点当前详情页标题区域。
+    if (
+        "会议记录_修改名称" in title
+        and by == "accessibility_id"
+        and value.startswith("【会议记录】")
+    ):
+        return {
+            "action": "click",
+            "name": "点击会议记录-当前记录标题",
+            "locator": {
+                "by": "android_uiautomator",
+                "value": 'new UiSelector().descriptionContains("【会议记录】")',
+            },
+            "timeout": 10,
+            "click_mode": "center",
+            "fallback_tap": {"x": 598, "y": 496},
+            "wait_after": 1,
+        }
+
+    # 修改会议记录名称时，录制导出的第二个 instance(8) 是标题右侧的编辑入口。
+    # 不能套用翻译页 instance(8)=底部麦克风的规则。
+    if (
+        "会议记录_修改名称" in title
+        and 'className("android.view.View").instance(8)' in value
+        and index >= 5
+    ):
+        return {
+            "action": "tap_point",
+            "name": "点击会议记录-名称编辑入口",
+            "x": 928,
+            "y": 463,
+            "wait_after": 1,
+        }
+
     # 首页 - 翻译中心
     if "翻译中心" in value:
         return {
@@ -349,6 +384,54 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
             title,
             fallback_tap={"x": 540, "y": 760},
         )
+
+    # 日期选择器里的完整 accessibility id 带年份、月份、星期，当前生日状态一变就会漂。
+    # 这里保留录制意图：切到上个月后选择 18 号。
+    if (
+        "修改生日" in title
+        and by == "accessibility_id"
+        and re.match(r"18,\s*\d{4}年\d{1,2}月18日", value)
+    ):
+        return description_contains_click_step(
+            "18,",
+            "点击生日日期：18号",
+            title,
+            fallback_tap={"x": 162, "y": 1502},
+        )
+
+    # 操作指引内容会随版本增减，录制里的“下一步”次数不能作为硬断言。
+    if "操作指引" in title and by == "accessibility_id" and value == "下一步":
+        return {
+            "action": "click",
+            "name": "点击操作指引-下一步（可选）",
+            "locator": {
+                "by": "accessibility_id",
+                "value": "下一步",
+            },
+            "timeout": 3,
+            "optional": True,
+            "wait_after": 1,
+        }
+
+    if "操作指引" in title and by == "accessibility_id" and value == "跳过":
+        return {
+            "action": "click",
+            "name": "结束操作指引",
+            "locator": {
+                "by": "accessibility_id",
+                "value": "跳过",
+            },
+            "fallback_locators": [
+                {
+                    "by": "accessibility_id",
+                    "value": "完成",
+                }
+            ],
+            "timeout": 3,
+            "fallback_timeout": 3,
+            "optional": True,
+            "wait_after": 1,
+        }
 
     return None
 

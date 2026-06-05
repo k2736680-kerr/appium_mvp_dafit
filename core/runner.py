@@ -249,6 +249,13 @@ class CaseRunner:
             EC.element_to_be_clickable((by, value))
         )
 
+    def click_element_for_step(self, el, step):
+        click_mode = step.get("click_mode", "element")
+        if click_mode == "center":
+            self.click_element_center(el)
+        else:
+            el.click()
+
     def action_click(self, step):
         locator = step.get("locator")
         if not locator:
@@ -262,6 +269,22 @@ class CaseRunner:
                 if attempt == 0 and step.get("hide_keyboard_on_retry", True):
                     self.hide_keyboard_if_present()
                     continue
+                for fallback_locator in step.get("fallback_locators", []):
+                    try:
+                        el = self.wait_for_element(
+                            fallback_locator,
+                            timeout=step.get("fallback_timeout", 3),
+                        )
+                    except TimeoutException:
+                        continue
+                    print(
+                        "[CLICK_FALLBACK]",
+                        f"locator not found: {locator};",
+                        f"use fallback locator: {fallback_locator}",
+                    )
+                    self.click_element_for_step(el, step)
+                    time.sleep(step.get("wait_after", 1))
+                    return
                 if step.get("fallback_tap"):
                     fallback = step["fallback_tap"]
                     print(
@@ -275,14 +298,13 @@ class CaseRunner:
                     )
                     time.sleep(step.get("wait_after", 1))
                     return
+                if step.get("optional"):
+                    print("[CLICK_OPTIONAL]", f"locator not found, skip: {locator}")
+                    time.sleep(step.get("wait_after_missing", 0))
+                    return
                 raise AssertionError(f"找不到或无法点击元素: {locator}")
 
-            click_mode = step.get("click_mode", "element")
-            if click_mode == "center":
-                self.click_element_center(el)
-            else:
-                el.click()
-
+            self.click_element_for_step(el, step)
             time.sleep(step.get("wait_after", 1))
             if attempt == 0 and self.is_login_required(self.driver.page_source):
                 self.ensure_logged_in("click")

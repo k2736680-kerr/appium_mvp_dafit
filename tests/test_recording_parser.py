@@ -356,6 +356,90 @@ el1.click()
     assert steps[0]["fallback_tap"] == {"x": 540, "y": 760}
 
 
+def test_meeting_rename_record_title_uses_dynamic_title_prefix():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="【会议记录】05-28 15:51")
+el1.click()
+""",
+        stem="会议记录_修改名称",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["name"] == "点击会议记录-当前记录标题"
+    assert steps[0]["locator"] == {
+        "by": "android_uiautomator",
+        "value": 'new UiSelector().descriptionContains("【会议记录】")',
+    }
+    assert steps[0]["click_mode"] == "center"
+    assert steps[0]["fallback_tap"] == {"x": 598, "y": 496}
+
+
+def test_meeting_rename_second_instance_8_is_edit_entry_not_bottom_mic():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="A")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="B")
+el2.click()
+el3 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="C")
+el3.click()
+el4 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="D")
+el4.click()
+el5 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.view.View\\").instance(8)")
+el5.click()
+""",
+        stem="会议记录_修改名称",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[4]["name"] == "点击会议记录-名称编辑入口"
+    assert steps[4]["x"] == 928
+    assert steps[4]["y"] == 463
+
+
+def test_birthday_date_picker_selects_day_without_fixed_month():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="18, 2002年9月18日星期三")
+el1.click()
+""",
+        stem="修改生日",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["name"] == "点击生日日期：18号"
+    assert steps[0]["locator"] == {
+        "by": "android_uiautomator",
+        "value": 'new UiSelector().descriptionContains("18,")',
+    }
+    assert steps[0]["fallback_tap"] == {"x": 162, "y": 1502}
+
+
+def test_operation_guide_next_is_optional_and_finish_can_replace_skip():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="下一步")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="跳过")
+el2.click()
+""",
+        stem="操作指引",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["optional"] is True
+    assert steps[0]["timeout"] == 3
+    assert steps[1]["name"] == "结束操作指引"
+    assert steps[1]["fallback_locators"] == [
+        {"by": "accessibility_id", "value": "完成"}
+    ]
+
+
 def test_recording_priority_sort_key_orders_p0_to_p3_before_unmarked():
     files = [
         Path("recordings/普通用例.py"),

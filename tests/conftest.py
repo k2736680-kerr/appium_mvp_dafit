@@ -330,8 +330,8 @@ def _collect_step_artifacts(report):
             {
                 "index": step_no,
                 "name": step_name,
-                "png_rel": png_path.relative_to(case_dir.parent.parent).as_posix(),
-                "xml_rel": xml_path.relative_to(case_dir.parent.parent).as_posix() if xml_path.exists() else None,
+                "png_rel": png_path.relative_to(case_dir.parent.parent.parent).as_posix(),
+                "xml_rel": xml_path.relative_to(case_dir.parent.parent.parent).as_posix() if xml_path.exists() else None,
             }
         )
     return steps
