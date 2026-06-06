@@ -509,6 +509,52 @@ el2.click()
     }
 
 
+def test_parse_album_photo_picker_uses_semantic_thumbnail_action():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\\"图片翻译\\\\n拍摄并翻译\\")")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.view.View\\").instance(24)")
+el2.click()
+""",
+        stem="[P0]图片翻译_英文拍照_相册",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[1] == {
+        "action": "tap_first_album_photo",
+        "name": "点击 Google 相册第一张图片",
+        "description_contains": ["照片拍摄于", "Photo taken"],
+        "fallback_tap": {"x": 179, "y": 1354},
+        "timeout": 15,
+        "wait_after": 1,
+    }
+
+
+def test_parse_album_done_button_uses_text_center_action():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().description(\\"图片翻译\\\\n拍摄并翻译\\")")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.widget.Button\\").instance(6)")
+el2.click()
+""",
+        stem="[P0]图片翻译_英文拍照_相册",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[1] == {
+        "action": "tap_text_center",
+        "name": "点击 Google 相册完成",
+        "texts": ["完成", "Done"],
+        "fallback_tap": {"x": 913, "y": 2202},
+        "timeout": 15,
+        "wait_after": 2,
+    }
+
+
 def test_assert_translation_fails_on_blocker_before_stale_text_validation(monkeypatch):
     page_source = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy index="0" class="hierarchy">

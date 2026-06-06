@@ -238,6 +238,34 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
             "wait_after": 2,
         }
 
+    if (
+        "相册" in title
+        and by == "android_uiautomator"
+        and 'className("android.view.View").instance(24)' in value
+    ):
+        return {
+            "action": "tap_first_album_photo",
+            "name": "点击 Google 相册第一张图片",
+            "description_contains": ["照片拍摄于", "Photo taken"],
+            "fallback_tap": {"x": 179, "y": 1354},
+            "timeout": 15,
+            "wait_after": 1,
+        }
+
+    if (
+        "相册" in title
+        and by == "android_uiautomator"
+        and 'className("android.widget.Button").instance(6)' in value
+    ):
+        return {
+            "action": "tap_text_center",
+            "name": "点击 Google 相册完成",
+            "texts": ["完成", "Done"],
+            "fallback_tap": {"x": 913, "y": 2202},
+            "timeout": 15,
+            "wait_after": 2,
+        }
+
     # 会议记录页底部录制按钮。
     # Inspector 会导出 instance(7)，但实际回放时这个弱定位不稳定，容易没有点到
     # 底部录制按钮，导致后续找不到“结束录制”。

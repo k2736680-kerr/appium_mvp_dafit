@@ -1,6 +1,7 @@
 import sys
 import time
 import threading
+import re
 
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
@@ -121,6 +122,10 @@ class CaseRunner:
             self.action_tap_role(step)
         elif action == "tap_my_account":
             self.action_tap_my_account(step)
+        elif action == "tap_first_album_photo":
+            self.action_tap_first_album_photo(step)
+        elif action == "tap_text_center":
+            self.action_tap_text_center(step)
         elif action == "tap_ratio":
             self.action_tap_ratio(step)
         elif action in ("tap_point", "tap_coordinate"):
@@ -386,6 +391,123 @@ class CaseRunner:
             {"x": int(step["x"]), "y": int(step["y"])},
         )
         time.sleep(step.get("wait_after", 1))
+
+    def action_tap_first_album_photo(self, step):
+        timeout = float(step.get("timeout", DEFAULT_TIMEOUT))
+        prefixes = step.get("description_contains") or ["照片拍摄于", "Photo taken"]
+        end_time = time.time() + timeout
+        last_error = None
+
+        while time.time() < end_time:
+            for prefix in prefixes:
+                locator = {
+                    "by": "android_uiautomator",
+                    "value": f'new UiSelector().descriptionContains("{prefix}")',
+                }
+                by, value = to_appium_locator(locator)
+                try:
+                    elements = self.driver.find_elements(by, value)
+                except Exception as exc:
+                    last_error = exc
+                    elements = []
+                if not elements:
+                    continue
+                el = elements[0]
+                rect = el.rect
+                x = int(rect["x"] + rect["width"] / 2)
+                y = int(rect["y"] + rect["height"] / 2)
+                print(
+                    "[ALBUM_PHOTO]",
+                    f"descriptionContains={prefix}",
+                    f"rect={rect}",
+                    f"tap=({x},{y})",
+                )
+                self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+                time.sleep(step.get("wait_after", 1))
+                return
+            time.sleep(0.5)
+
+        page_source = self.driver.page_source
+        match = re.search(
+            r'content-desc="[^"]*(?:照片拍摄于|Photo taken)[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+            page_source,
+        )
+        if match:
+            left, top, right, bottom = [int(value) for value in match.groups()]
+            x = int((left + right) / 2)
+            y = int((top + bottom) / 2)
+            print("[ALBUM_PHOTO_XML]", f"bounds=({left},{top},{right},{bottom})", f"tap=({x},{y})")
+            self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+            time.sleep(step.get("wait_after", 1))
+            return
+
+        fallback = step.get("fallback_tap")
+        if fallback:
+            print(
+                "[ALBUM_PHOTO_FALLBACK]",
+                f"tap ({fallback['x']},{fallback['y']})",
+                f"last_error={last_error}",
+            )
+            self.driver.execute_script(
+                "mobile: clickGesture",
+                {"x": int(fallback["x"]), "y": int(fallback["y"])},
+            )
+            time.sleep(step.get("wait_after", 1))
+            return
+
+        raise AssertionError("找不到 Google 相册第一张图片缩略图")
+
+    def action_tap_text_center(self, step):
+        texts = step.get("texts") or [step.get("text")]
+        texts = [text for text in texts if text]
+        if not texts:
+            raise ValueError("tap_text_center 缺少 text/texts")
+
+        timeout = float(step.get("timeout", DEFAULT_TIMEOUT))
+        end_time = time.time() + timeout
+        last_error = None
+
+        while time.time() < end_time:
+            for text in texts:
+                for selector in (
+                    f'new UiSelector().text("{text}")',
+                    f'new UiSelector().descriptionContains("{text}")',
+                ):
+                    locator = {"by": "android_uiautomator", "value": selector}
+                    by, value = to_appium_locator(locator)
+                    try:
+                        elements = self.driver.find_elements(by, value)
+                    except Exception as exc:
+                        last_error = exc
+                        elements = []
+                    if not elements:
+                        continue
+                    el = elements[0]
+                    rect = el.rect
+                    x = int(rect["x"] + rect["width"] / 2)
+                    y = int(rect["y"] + rect["height"] / 2)
+                    print("[TAP_TEXT_CENTER]", f"text={text}", f"rect={rect}", f"tap=({x},{y})")
+                    self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+                    time.sleep(step.get("wait_after", 1))
+                    return
+            time.sleep(0.5)
+
+        fallback = step.get("fallback_tap")
+        if fallback:
+            print(
+                "[TAP_TEXT_CENTER_FALLBACK]",
+                f"tap ({fallback['x']},{fallback['y']})",
+                f"texts={texts}",
+                f"last_error={last_error}",
+            )
+            self.driver.execute_script(
+                "mobile: clickGesture",
+                {"x": int(fallback["x"]), "y": int(fallback["y"])},
+            )
+            time.sleep(step.get("wait_after", 1))
+            return
+
+        raise AssertionError(f"找不到文本元素: {texts}")
 
     def action_tap_my_account(self, step):
         def is_account_page():
