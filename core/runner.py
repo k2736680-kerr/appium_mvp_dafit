@@ -114,6 +114,10 @@ class CaseRunner:
         name = self.step_name(index, step)
         safe_print(f"\n[STEP] {index}: {name} | action={action}")
 
+        # 新版单向模式会在首次录音前弹出“请保持屏幕开启”提示。
+        # 它不是业务失败；若不关闭，后面的录音和语言选择都会在弹窗下执行。
+        self.dismiss_known_transient_dialogs()
+
         if action == "click":
             self.action_click(step)
         elif action == "input_text":
@@ -176,10 +180,41 @@ class CaseRunner:
         else:
             raise ValueError(f"不支持的 action: {action}")
 
+        self.dismiss_known_transient_dialogs()
+
         self.artifacts.save(self.driver, index, name)
 
         if step.get("check_blockers", True):
             self.fail_if_blocked(index, name)
+
+    def dismiss_known_transient_dialogs(self):
+        """Dismiss only the known non-business prompt introduced by the app.
+
+        Do not click generic confirmation buttons unless the prompt text is present:
+        profile and picker flows legitimately use those buttons as business actions.
+        """
+        try:
+            page_source = self.driver.page_source
+        except Exception:
+            return False
+
+        if "\u8bf7\u4fdd\u6301\u5c4f\u5e55\u5f00\u542f" not in page_source:
+            return False
+
+        for value in ("\u6211\u77e5\u9053\u4e86", "\u77e5\u9053\u4e86", "OK"):
+            try:
+                el = self.optional_element(
+                    {"by": "accessibility_id", "value": value}, timeout=1
+                )
+                if el:
+                    self.click_element_center(el)
+                    safe_print("[DISMISS_PROMPT]", f"clicked={value}")
+                    time.sleep(0.5)
+                    return True
+            except Exception:
+                continue
+        safe_print("[DISMISS_PROMPT]", "screen-on prompt present but no dismiss button found")
+        return False
 
     def fail_if_blocked(self, index, name):
         page_source = self.driver.page_source
@@ -267,6 +302,21 @@ class CaseRunner:
             raise ValueError("click 步骤缺少 locator")
 
         timeout = step.get("timeout", DEFAULT_TIMEOUT)
+        fallback_locators = list(step.get("fallback_locators", []))
+        # Android system camera / picker controls differ by image provider and
+        # locale.  Keep the recorded label first, then try the equivalent action.
+        if locator.get("by") == "accessibility_id":
+            value = locator.get("value")
+            if value == "完成":
+                fallback_locators.extend(
+                    {"by": "accessibility_id", "value": label}
+                    for label in ("使用照片", "Use photo", "Done")
+                )
+            elif value == "提交":
+                fallback_locators.extend(
+                    {"by": "accessibility_id", "value": label}
+                    for label in ("保存", "Save", "确认")
+                )
         for attempt in range(2):
             try:
                 el = self.wait_for_element(locator, timeout=timeout)
@@ -274,7 +324,7 @@ class CaseRunner:
                 if attempt == 0 and step.get("hide_keyboard_on_retry", True):
                     self.hide_keyboard_if_present()
                     continue
-                for fallback_locator in step.get("fallback_locators", []):
+                for fallback_locator in fallback_locators:
                     try:
                         el = self.wait_for_element(
                             fallback_locator,
@@ -397,6 +447,162 @@ class CaseRunner:
         prefixes = step.get("description_contains") or ["照片拍摄于", "Photo taken"]
         end_time = time.time() + timeout
         last_error = None
+
+        # 测试图片固定在相册的“四月”分组。夜跑期间 App 会自动保存
+        # 截图/图片到最新月份，因此不能再依赖首图或 Inspector 的 instance。
+        # 先按媒体日期滚动定位；找不到时直接失败，避免选错图后制造假业务失败。
+        album_month_text = step.get("album_month_text")
+        if album_month_text:
+            locator = {
+                "by": "android_uiautomator",
+                "value": f'new UiSelector().text("{album_month_text}")',
+            }
+            by, value = to_appium_locator(locator)
+            max_scrolls = int(step.get("max_scrolls", 8))
+            for scroll_index in range(max_scrolls + 1):
+                try:
+                    elements = self.driver.find_elements(by, value)
+                except Exception as exc:
+                    last_error = exc
+                    elements = []
+                if elements:
+                    rect = elements[0].rect
+                    x = int(step.get("album_photo_x", 179))
+                    y = int(rect["y"] + rect["height"] + step.get("album_photo_offset_y", 180))
+                    safe_print(
+                        "[ALBUM_PHOTO_MONTH]",
+                        f"month={album_month_text}",
+                        f"scrolls={scroll_index}",
+                        f"header={rect}",
+                        f"tap=({x},{y})",
+                    )
+                    self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+                    time.sleep(step.get("wait_after", 1))
+                    return
+                if scroll_index < max_scrolls:
+                    self.driver.execute_script(
+                        "mobile: dragGesture",
+                        {"startX": 540, "startY": 2050, "endX": 540, "endY": 1200, "speed": 2500},
+                    )
+                    time.sleep(0.7)
+            raise AssertionError(
+                f"找不到相册测试图片分组 {album_month_text}；"
+                f"已滚动 {max_scrolls} 次；last_error={last_error}"
+            )
+
+        album_month_text = step.get("album_month_text")
+        if album_month_text:
+            locator = {
+                "by": "android_uiautomator",
+                "value": f'new UiSelector().text("{album_month_text}")',
+            }
+            by, value = to_appium_locator(locator)
+            max_scrolls = int(step.get("max_scrolls", 8))
+            for scroll_index in range(max_scrolls + 1):
+                try:
+                    elements = self.driver.find_elements(by, value)
+                except Exception as exc:
+                    last_error = exc
+                    elements = []
+                if elements:
+                    rect = elements[0].rect
+                    x = int(step.get("album_photo_x", 179))
+                    y = int(rect["y"] + rect["height"] + step.get("album_photo_offset_y", 180))
+                    safe_print(
+                        "[ALBUM_PHOTO_MONTH]",
+                        f"month={album_month_text}",
+                        f"scrolls={scroll_index}",
+                        f"header={rect}",
+                        f"tap=({x},{y})",
+                    )
+                    self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+                    time.sleep(step.get("wait_after", 1))
+                    return
+                if scroll_index < max_scrolls:
+                    self.driver.execute_script(
+                        "mobile: dragGesture",
+                        {"startX": 540, "startY": 2050, "endX": 540, "endY": 1200, "speed": 2500},
+                    )
+                    time.sleep(0.7)
+            raise AssertionError(
+                f"找不到相册测试图片分组 {album_month_text}；"
+                f"已滚动 {max_scrolls} 次；last_error={last_error}"
+            )
+
+        photo_date_contains = step.get("photo_date_contains")
+        if photo_date_contains:
+            locator = {
+                "by": "android_uiautomator",
+                "value": f'new UiSelector().descriptionContains("{photo_date_contains}")',
+            }
+            by, value = to_appium_locator(locator)
+            max_scrolls = int(step.get("max_scrolls", 8))
+            for scroll_index in range(max_scrolls + 1):
+                try:
+                    elements = self.driver.find_elements(by, value)
+                except Exception as exc:
+                    last_error = exc
+                    elements = []
+                if elements:
+                    rect = elements[0].rect
+                    x = int(rect["x"] + rect["width"] / 2)
+                    y = int(rect["y"] + rect["height"] / 2)
+                    safe_print(
+                        "[ALBUM_PHOTO_DATE]",
+                        f"date={photo_date_contains}",
+                        f"scrolls={scroll_index}",
+                        f"rect={rect}",
+                        f"tap=({x},{y})",
+                    )
+                    self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+                    time.sleep(step.get("wait_after", 1))
+                    return
+                if scroll_index < max_scrolls:
+                    self.driver.execute_script(
+                        "mobile: dragGesture",
+                        {
+                            "startX": 540,
+                            "startY": 2050,
+                            "endX": 540,
+                            "endY": 1200,
+                            "speed": 2500,
+                        },
+                    )
+                    time.sleep(0.7)
+            raise AssertionError(
+                f"找不到相册测试图片（日期包含 {photo_date_contains}），"
+                f"已滚动 {max_scrolls} 次；last_error={last_error}"
+            )
+
+        # Inspector originally selected a concrete view instance.  The old
+        # implementation discarded that information and always chose the first
+        # thumbnail, so a newly-added gallery image silently changed all image
+        # translation cases.  Prefer the recorded target when it is available.
+        view_instance = step.get("view_instance")
+        if view_instance is not None:
+            locator = {
+                "by": "android_uiautomator",
+                "value": (
+                    'new UiSelector().className("android.view.View")'
+                    f".instance({int(view_instance)})"
+                ),
+            }
+            try:
+                el = self.wait_for_element(locator, timeout=timeout)
+                rect = el.rect
+                x = int(rect["x"] + rect["width"] / 2)
+                y = int(rect["y"] + rect["height"] / 2)
+                safe_print(
+                    "[ALBUM_PHOTO_RECORDED]",
+                    f"instance={view_instance}",
+                    f"rect={rect}",
+                    f"tap=({x},{y})",
+                )
+                self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+                time.sleep(step.get("wait_after", 1))
+                return
+            except Exception as exc:
+                last_error = exc
 
         while time.time() < end_time:
             for prefix in prefixes:

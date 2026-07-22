@@ -524,9 +524,8 @@ el2.click()
 
     assert steps[1] == {
         "action": "tap_first_album_photo",
-        "name": "点击 Google 相册第一张图片",
+        "name": "选择 Google 相册最新测试图片",
         "description_contains": ["照片拍摄于", "Photo taken"],
-        "fallback_tap": {"x": 179, "y": 1354},
         "timeout": 15,
         "wait_after": 1,
     }

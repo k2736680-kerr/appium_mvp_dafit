@@ -1,6 +1,7 @@
 import ast
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -14,11 +15,13 @@ from core.driver_factory import (
 )
 from core.recording_rules import augment_recording_steps, parse_case_labels
 from core.runner import CaseRunner, DEFAULT_BLOCKERS
-from core.config import PROJECT_ROOT
+from core.config import ANDROID_ADB, ANDROID_UDID, PROJECT_ROOT
 
 
 APP_PACKAGE = "com.moyoung.auro.ai"
 RECORDINGS_DIR = PROJECT_ROOT / "recordings"
+IMAGE_TRANSLATION_SOURCE = PROJECT_ROOT / "assets" / "images" / "image_translation_source.png"
+DEVICE_IMAGE_TRANSLATION_SOURCE = "/sdcard/DCIM/AppiumMvp/image_translation_source.png"
 APP_RESTARTED_ONCE = False
 HOME_MARKER = "翻译中心"
 
@@ -41,6 +44,37 @@ def safe_case_id(name: str) -> str:
         else:
             result.append("_")
     return "".join(result).strip("_") or "recording_case"
+
+
+def sync_image_translation_source() -> None:
+    """Put the controlled source image at the top of Android Photo Picker.
+
+    Reports are saved on the host, but Android apps may create media files while
+    running.  Re-pushing the source immediately before each image test makes it
+    the newest picker item and removes any dependency on gallery history.
+    """
+    if not IMAGE_TRANSLATION_SOURCE.exists():
+        raise FileNotFoundError(f"图片翻译测试图片不存在: {IMAGE_TRANSLATION_SOURCE}")
+
+    base = [ANDROID_ADB, "-s", ANDROID_UDID]
+    commands = [
+        [*base, "shell", "mkdir", "-p", "/sdcard/DCIM/AppiumMvp"],
+        [*base, "push", str(IMAGE_TRANSLATION_SOURCE), DEVICE_IMAGE_TRANSLATION_SOURCE],
+        [*base, "shell", "touch", DEVICE_IMAGE_TRANSLATION_SOURCE],
+        [
+            *base,
+            "shell",
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d",
+            f"file://{DEVICE_IMAGE_TRANSLATION_SOURCE}",
+        ],
+    ]
+    for command in commands:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=30)
+    print(f"[IMAGE_SOURCE_SYNC] {DEVICE_IMAGE_TRANSLATION_SOURCE}")
 
 
 def unquote_python_string(value: str) -> str:
@@ -245,9 +279,8 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     ):
         return {
             "action": "tap_first_album_photo",
-            "name": "点击 Google 相册第一张图片",
+            "name": "选择 Google 相册最新测试图片",
             "description_contains": ["照片拍摄于", "Photo taken"],
-            "fallback_tap": {"x": 179, "y": 1354},
             "timeout": 15,
             "wait_after": 1,
         }
@@ -884,6 +917,9 @@ def test_run_recording(recording_file):
 
             if start.get("ensure_app_home", False):
                 ensure_app_home(driver)
+
+            if case_data.get("recording_meta", {}).get("image_translation"):
+                sync_image_translation_source()
 
             runner = CaseRunner(driver, case_data)
             runner.run()

@@ -69,7 +69,12 @@ if (-not $ReportServerOnly) {
     $RunArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command `"Set-Location -LiteralPath '$ProjectRoot'; & '$PythonExe' 'scripts\nightly_run.py' --notify auto`""
     $RunAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $RunArgs
     $RunTrigger = New-ScheduledTaskTrigger -Daily -At $RunTime
-    $RunSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 6)
+    $RunSettings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 6) `
+        -StartWhenAvailable `
+        -WakeToRun
 
     try {
         Register-ScheduledTask `
