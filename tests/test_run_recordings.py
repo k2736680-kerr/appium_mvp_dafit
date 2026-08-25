@@ -893,6 +893,19 @@ def ensure_app_home(driver, timeout=20, max_back=6):
     )
 
 
+def is_translation_timeout_error(exc) -> bool:
+    """整个轮询周期内页面没出现任何翻译结果（last_source=None）。
+
+    这种失败和语义判不过不同：页面上连候选文本都没有，几乎等价于
+    录音整段静音，最常见的触发原因是音频桥接冷启动，值得整条重跑一次。
+    语义校验不通过（页面有文本但模型判错）不在此列，重跑没有意义。
+    """
+    if not isinstance(exc, AssertionError):
+        return False
+    message = str(exc)
+    return "等待翻译结果超时" in message and "last_source=None" in message
+
+
 RECORDING_FILES = load_recording_files()
 
 
@@ -926,10 +939,18 @@ def test_run_recording(recording_file):
             return
         except Exception as exc:
             last_error = exc
-            if attempt >= 2 or not is_transient_session_error(exc):
+            if attempt >= 2:
                 raise
-            print(f"[RECOVERY] transient Appium/session error, retry case once: {exc}")
-            restart_appium_server("retry recording case after transient session error")
+            if is_transient_session_error(exc):
+                print(f"[RECOVERY] transient Appium/session error, retry case once: {exc}")
+                restart_appium_server("retry recording case after transient session error")
+            elif is_translation_timeout_error(exc):
+                # 夜跑前几条用例的录音经常整段静音：模拟器刚启动时
+                # 主机音频到虚拟麦克风的桥接还没建立，第一次打开麦克风
+                # 采集不到声音。重跑一次等桥接建立后即可正常。
+                print(f"[RECOVERY] 翻译结果超时（疑似音频桥接冷启动），重试一次: {exc}")
+            else:
+                raise
         finally:
             quit_driver_safely(driver)
 

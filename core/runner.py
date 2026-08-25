@@ -70,6 +70,8 @@ ROLE_POINTS = {
     "bottom_center_mic": {"x_ratio": 0.50, "y_ratio": 0.895},
 }
 
+MIC_POINT_RESOLVE_TIMEOUT = 5
+
 
 class CaseRunner:
     def __init__(self, driver, case_data):
@@ -915,7 +917,29 @@ class CaseRunner:
             raise ValueError(f"未知 role: {role}，可用 role: {list(ROLE_POINTS)}")
         point = ROLE_POINTS[role]
         x, y = self.point_from_ratio(point["x_ratio"], point["y_ratio"])
+        if role == "bottom_mic":
+            resolved = self.resolve_bottom_mic_point()
+            if resolved:
+                x, y = resolved
         self.long_press_point(x, y, step)
+
+    def resolve_bottom_mic_point(self):
+        """底部麦克风按钮的位置会随 App 版本变化（手机+耳机模式页曾在
+        1.0.20 更新后整体上移，固定比例坐标按空导致长按无反应），
+        优先按 content-desc 动态取元素中心，找不到再回退固定比例。"""
+        try:
+            locator = to_appium_locator(
+                {"by": "accessibility_id", "value": "手机麦克风"}
+            )
+            el = WebDriverWait(self.driver, MIC_POINT_RESOLVE_TIMEOUT).until(
+                EC.presence_of_element_located(locator)
+            )
+        except TimeoutException:
+            return None
+        rect = el.rect
+        center = (rect["x"] + rect["width"] // 2, rect["y"] + rect["height"] // 2)
+        safe_print("[LONG_PRESS]", f"已动态定位 手机麦克风 中心: {center}")
+        return center
 
     def action_long_press_point(self, step):
         self.long_press_point(int(step["x"]), int(step["y"]), step)
