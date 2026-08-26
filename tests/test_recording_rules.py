@@ -124,14 +124,14 @@ def test_augment_recording_steps_requires_start_and_stop_actions():
         raise AssertionError("expected audio-tagged recording to require two mic steps")
 
 
-def test_augment_recording_steps_long_press_uses_single_synced_action():
+def test_phone_mode_recording_uses_current_click_toggle():
     steps = [
         {"action": "tap_point", "name": "点击首页-翻译中心"},
         {"action": "tap_point", "name": "点击底部麦克风按钮"},
     ]
 
     augmented_steps, metadata = augment_recording_steps(
-        "[翻译]手机耳机模式_长按录音_英文转中文",
+        "[翻译]手机模式_点击录音_英文转中文",
         steps,
         enable_audio=True,
         enable_translation=True,
@@ -140,15 +140,34 @@ def test_augment_recording_steps_long_press_uses_single_synced_action():
     assert [step["action"] for step in augmented_steps] == [
         "tap_point",
         "mark_page_texts",
-        "long_press_role",
+        "tap_point",
+        "play_audio",
         "sleep",
+        "tap_point",
         "assert_translation",
     ]
-    long_press_step = augmented_steps[2]
-    assert long_press_step["role"] == "bottom_mic"
-    assert long_press_step["audio_file"] == "assets/audio/source_en.wav"
-    assert long_press_step["duration"] == "auto"
+    play_step = augmented_steps[3]
+    assert play_step["file"] == "assets/audio/source_en.wav"
+    assert play_step["wait_for_text"] == "点击停止说话"
+    assert augmented_steps[5]["name"] == "再次点击底部麦克风停止录音"
     assert metadata["audio_lang"] == "en"
+
+
+def test_single_direction_audio_waits_for_recording_connection_state():
+    steps = [
+        {"action": "tap_point", "name": "点击底部麦克风按钮"},
+        {"action": "tap_point", "name": "点击底部麦克风按钮"},
+    ]
+
+    augmented_steps, _metadata = augment_recording_steps(
+        "[翻译]单向模式_中文转英文",
+        steps,
+        enable_audio=True,
+        enable_translation=True,
+    )
+
+    play_step = next(step for step in augmented_steps if step["action"] == "play_audio")
+    assert play_step["wait_for_text"] == "已连接"
 
 
 def test_augment_recording_steps_long_press_skips_recorded_stop_click():

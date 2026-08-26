@@ -43,8 +43,16 @@ def bool_env_or_local(env_name: str, local_name: str, default=True) -> bool:
 
 APPIUM_SERVER = os.environ.get("APPIUM_SERVER", "http://127.0.0.1:4723")
 ANDROID_UDID = os.environ.get("ANDROID_UDID", "emulator-5554")
-ANDROID_ADB = os.environ.get("ANDROID_ADB", r"E:\android_sdk\platform-tools\adb.exe")
-ANDROID_EMULATOR = os.environ.get("ANDROID_EMULATOR", r"E:\android_sdk\emulator\emulator.exe")
+ANDROID_ADB_SERIAL = os.environ.get("ANDROID_ADB_SERIAL", ANDROID_UDID)
+APPIUM_UDID = os.environ.get("APPIUM_UDID", ANDROID_UDID)
+ANDROID_ADB = os.environ.get(
+    "ANDROID_ADB",
+    r"D:\AutoTestTools\Tools\AndroidSdk\platform-tools\adb.exe",
+)
+ANDROID_EMULATOR = os.environ.get(
+    "ANDROID_EMULATOR",
+    r"D:\AutoTestTools\Tools\AndroidSdk\emulator\emulator.exe",
+)
 ANDROID_AVD = os.environ.get("ANDROID_AVD", "Pixel_8a")
 ANDROID_EMULATOR_EXTRA_ARGS = os.environ.get("ANDROID_EMULATOR_EXTRA_ARGS", "-no-snapshot-load")
 ANDROID_AUDIO_BACKEND = os.environ.get("ANDROID_AUDIO_BACKEND", "dsound")
@@ -52,6 +60,24 @@ ANDROID_BOOT_TIMEOUT_SECONDS = int(os.environ.get("ANDROID_BOOT_TIMEOUT_SECONDS"
 ANDROID_POST_BOOT_WAIT_SECONDS = float(os.environ.get("ANDROID_POST_BOOT_WAIT_SECONDS", "0"))
 ANDROID_AUTO_START_EMULATOR = os.environ.get("ANDROID_AUTO_START_EMULATOR", "1").lower() not in {"0", "false", "no"}
 ANDROID_ALLOW_HOST_AUDIO = os.environ.get("ANDROID_ALLOW_HOST_AUDIO", "1").lower() not in {"0", "false", "no"}
+AUDIO_INJECTION_MODE = env_or_local("AUDIO_INJECTION_MODE", "audio_injection_mode", "host")
+DEVICE_FARM_DOCKER_COMMAND = env_or_local("DEVICE_FARM_DOCKER_COMMAND", "device_farm_docker_command", "docker")
+DEVICE_FARM_SSH_TARGET = env_or_local("DEVICE_FARM_SSH_TARGET", "device_farm_ssh_target", "")
+DEVICE_FARM_EMULATOR_CONTAINER = env_or_local(
+    "DEVICE_FARM_EMULATOR_CONTAINER",
+    "device_farm_emulator_container",
+    "",
+)
+DEVICE_FARM_PULSE_SERVER = env_or_local(
+    "DEVICE_FARM_PULSE_SERVER",
+    "device_farm_pulse_server",
+    "tcp:127.0.0.1:4713",
+)
+DEVICE_FARM_PULSE_SINK = env_or_local(
+    "DEVICE_FARM_PULSE_SINK",
+    "device_farm_pulse_sink",
+    "virtual_mic",
+)
 APP_PACKAGE = os.environ.get("APP_PACKAGE", "com.moyoung.auro.ai")
 APP_ACTIVITY = os.environ.get("APP_ACTIVITY", ".MainActivity")
 LAUNCHER_PACKAGE = os.environ.get("LAUNCHER_PACKAGE", "com.google.android.apps.nexuslauncher")

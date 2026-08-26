@@ -30,8 +30,8 @@ appium_mvp/
 ```text
 APPIUM_SERVER=http://127.0.0.1:4723
 ANDROID_UDID=emulator-5554
-ANDROID_ADB=E:\android_sdk\platform-tools\adb.exe
-ANDROID_EMULATOR=E:\android_sdk\emulator\emulator.exe
+ANDROID_ADB=D:\AutoTestTools\Tools\AndroidSdk\platform-tools\adb.exe
+ANDROID_EMULATOR=D:\AutoTestTools\Tools\AndroidSdk\emulator\emulator.exe
 ANDROID_AVD=Pixel_8a
 ANDROID_ALLOW_HOST_AUDIO=1
 ANDROID_AUDIO_BACKEND=dsound
@@ -116,6 +116,8 @@ runner 支持按需自动登录。遇到“请登录/需要登录”弹窗或登
 ## 翻译校验
 
 `[翻译]` 用例在录音结束后会从页面 XML 提取源文本和目标译文，并调用模型做反向翻译语义判断。
+
+当前 Auro 1.2.25 已移除双耳机入口，因此旧双耳机录制文件以 `_` 开头，不进入夜跑。手机模式使用点击开始/再次点击停止；单向模式会自动关闭“请保持屏幕开启”提示，并在播放音频前等待右上角状态变为“已连接”。手机模式则等待按钮变为“点击停止说话”。
 
 模型相关环境变量：
 

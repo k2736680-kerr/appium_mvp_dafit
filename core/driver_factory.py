@@ -12,6 +12,7 @@ from appium.options.android import UiAutomator2Options
 
 from core.config import (
     ANDROID_ADB,
+    ANDROID_ADB_SERIAL,
     ANDROID_ALLOW_HOST_AUDIO,
     ANDROID_AUDIO_BACKEND,
     ANDROID_AUTO_START_EMULATOR,
@@ -20,7 +21,7 @@ from core.config import (
     ANDROID_EMULATOR,
     ANDROID_EMULATOR_EXTRA_ARGS,
     ANDROID_POST_BOOT_WAIT_SECONDS,
-    ANDROID_UDID,
+    APPIUM_UDID,
     APPIUM_SERVER,
     APP_ACTIVITY,
     APP_PACKAGE,
@@ -78,9 +79,9 @@ def _connected_adb_devices():
 
 
 def _target_device(devices):
-    if ANDROID_UDID and ANDROID_UDID in devices:
-        return ANDROID_UDID
-    if not ANDROID_UDID and devices:
+    if ANDROID_ADB_SERIAL and ANDROID_ADB_SERIAL in devices:
+        return ANDROID_ADB_SERIAL
+    if not ANDROID_ADB_SERIAL and devices:
         return devices[0]
     return None
 
@@ -184,7 +185,7 @@ def ensure_android_device_ready(restart_if_unresponsive=False):
             )
         raise RuntimeError(
             "No usable Android device found.\n"
-            f"Expected device: {ANDROID_UDID}\n"
+            f"Expected ADB device: {ANDROID_ADB_SERIAL}\n"
             f"adb output:\n{output.strip() or '(empty)'}"
         )
 
@@ -213,7 +214,7 @@ def ensure_android_device_ready(restart_if_unresponsive=False):
     if not _start_emulator_detached() and not wait_for_android_device_ready(timeout_seconds=30):
         raise RuntimeError(
             "No usable Android device found, and the configured emulator could not be started.\n"
-            f"Expected device: {ANDROID_UDID}\n"
+            f"Expected ADB device: {ANDROID_ADB_SERIAL}\n"
             f"emulator: {ANDROID_EMULATOR}\n"
             f"avd: {ANDROID_AVD}\n"
             f"adb output:\n{output.strip() or '(empty)'}"
@@ -222,7 +223,7 @@ def ensure_android_device_ready(restart_if_unresponsive=False):
     if not wait_for_android_device_ready():
         raise RuntimeError(
             f"Android emulator did not become ready within {ANDROID_BOOT_TIMEOUT_SECONDS} seconds.\n"
-            f"Expected device: {ANDROID_UDID}"
+            f"Expected ADB device: {ANDROID_ADB_SERIAL}"
         )
 
 
@@ -449,8 +450,8 @@ def create_driver(start_mode="app", no_reset=True):
     caps = {
         "platformName": "Android",
         "appium:automationName": "UiAutomator2",
-        "appium:deviceName": ANDROID_UDID,
-        "appium:udid": ANDROID_UDID,
+        "appium:deviceName": APPIUM_UDID,
+        "appium:udid": APPIUM_UDID,
         "appium:appPackage": app_package,
         "appium:appActivity": app_activity,
         "appium:appWaitActivity": app_wait_activity,

@@ -125,7 +125,16 @@ def is_stop_recording_step(step: dict) -> bool:
 
 
 def is_long_press_recording_case(title: str) -> bool:
+    # Auro 1.2.25 changed phone mode from press-and-hold to
+    # click-to-start/click-to-stop. The current UI contract takes precedence
+    # over historical recording names.
+    if is_phone_toggle_case(title):
+        return False
     return any(keyword in title for keyword in LONG_PRESS_KEYWORDS)
+
+
+def is_phone_toggle_case(title: str) -> bool:
+    return "手机模式" in title or "手机耳机" in title
 
 
 def find_recording_boundary_steps(steps: list[dict]):
@@ -168,8 +177,8 @@ def find_recording_boundary_steps(steps: list[dict]):
     return start_index, stop_index
 
 
-def build_audio_step(audio_lang: str) -> dict:
-    return {
+def build_audio_step(audio_lang: str, wait_for_text: str | None = None) -> dict:
+    step = {
         "action": "play_audio",
         "name": f"播放测试音频({audio_lang})",
         "file": f"assets/audio/source_{audio_lang}.wav",
@@ -177,6 +186,10 @@ def build_audio_step(audio_lang: str) -> dict:
         "pre_delay": audio_start_delay_seconds(audio_lang),
         "wait_after": 0,
     }
+    if wait_for_text:
+        step["wait_for_text"] = wait_for_text
+        step["wait_for_text_timeout"] = 30
+    return step
 
 
 def build_long_press_audio_step(audio_lang: str) -> dict:
@@ -278,8 +291,9 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
         return steps, metadata
 
     use_long_press = is_long_press_recording_case(title)
+    use_phone_toggle = is_phone_toggle_case(title)
     start_index, stop_index = find_recording_boundary_steps(steps)
-    if start_index is None or (stop_index is None and not use_long_press):
+    if start_index is None or (stop_index is None and not use_long_press and not use_phone_toggle):
         raise AssertionError(
             f"录制用例 {title} 启用了音频能力，但没有识别到完整的录音开始/结束动作。"
             "普通录音请在录制里保留开始和结束动作；长按录音请在文件名里包含“长按”。"
@@ -319,6 +333,23 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
                 )
             continue
 
+        if use_phone_toggle and index == start_index:
+            augmented_steps.append(step)
+            augmented_steps.append(build_audio_step(audio_lang, wait_for_text="点击停止说话"))
+            if AUDIO_SETTLE_SECONDS > 0:
+                augmented_steps.append(build_audio_settle_step())
+            stop_step = deepcopy(step)
+            stop_step["name"] = "再次点击底部麦克风停止录音"
+            augmented_steps.append(stop_step)
+            if enable_translation:
+                augmented_steps.append(
+                    build_translation_assert_step(
+                        metadata["source_lang"],
+                        metadata["target_lang"],
+                    )
+                )
+            continue
+
         if use_long_press and stop_index is not None and index == stop_index:
             if enable_translation:
                 augmented_steps.append(
@@ -329,10 +360,18 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
                 )
             continue
 
+        if use_phone_toggle and stop_index is not None and index == stop_index:
+            continue
+
         augmented_steps.append(step)
 
         if index == start_index:
-            augmented_steps.append(build_audio_step(audio_lang))
+            augmented_steps.append(
+                build_audio_step(
+                    audio_lang,
+                    wait_for_text="已连接" if "单向模式" in title else None,
+                )
+            )
             if AUDIO_SETTLE_SECONDS > 0:
                 augmented_steps.append(build_audio_settle_step())
 

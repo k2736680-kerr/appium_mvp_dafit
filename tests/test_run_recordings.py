@@ -15,7 +15,7 @@ from core.driver_factory import (
 )
 from core.recording_rules import augment_recording_steps, parse_case_labels
 from core.runner import CaseRunner, DEFAULT_BLOCKERS
-from core.config import ANDROID_ADB, ANDROID_UDID, PROJECT_ROOT
+from core.config import ANDROID_ADB, ANDROID_ADB_SERIAL, PROJECT_ROOT
 
 
 APP_PACKAGE = "com.moyoung.auro.ai"
@@ -56,7 +56,7 @@ def sync_image_translation_source() -> None:
     if not IMAGE_TRANSLATION_SOURCE.exists():
         raise FileNotFoundError(f"图片翻译测试图片不存在: {IMAGE_TRANSLATION_SOURCE}")
 
-    base = [ANDROID_ADB, "-s", ANDROID_UDID]
+    base = [ANDROID_ADB, "-s", ANDROID_ADB_SERIAL]
     commands = [
         [*base, "shell", "mkdir", "-p", "/sdcard/DCIM/AppiumMvp"],
         [*base, "push", str(IMAGE_TRANSLATION_SOURCE), DEVICE_IMAGE_TRANSLATION_SOURCE],
@@ -227,6 +227,16 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
             "attempt_wait": 1.5,
             "wait_after": 2,
         }
+
+    # 新版手机模式把按钮描述扩展为“手机麦克风\n点击按钮后说话”。
+    # 录制文件中的旧值仍是精确 accessibility_id，统一降级为稳定前缀定位。
+    if by == "accessibility_id" and value == "手机麦克风":
+        return description_contains_click_step(
+            "手机麦克风",
+            "点击手机模式麦克风按钮",
+            title,
+            fallback_tap={"x": 540, "y": 2080},
+        )
 
     # 语言列表、设置项这类控件经常是“名称\n当前值/英文名”，回放时当前值会变化。
     # 统一弱化到稳定首行，避免每个页面单独改录制脚本。

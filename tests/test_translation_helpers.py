@@ -190,6 +190,13 @@ class PassingTranslationValidator:
         return {"pass": True, "reason": "", "back_translation": "今天天气很好。"}
 
 
+class MissingKeyTranslationValidator:
+    api_key = ""
+
+    def validate_translation(self, *_args, **_kwargs):
+        raise AssertionError("页面文字存在时不应调用未配置的模型")
+
+
 def test_assert_translation_uses_text_before_disconnected_status(monkeypatch, tmp_path):
     monkeypatch.setenv("APPIUM_ARTIFACTS_ROOT", str(tmp_path))
     runner = CaseRunner(FakeTranslationDriver(), {"case_id": "unit_dual"})

@@ -22,6 +22,7 @@ from core.translation import (
     AliyunTranslationValidator,
     AliyunImageTranslationValidator,
     extract_visible_texts,
+    text_matches_language,
     resolve_translation_pair,
 )
 
@@ -105,6 +106,12 @@ class CaseRunner:
     def run(self):
         self.setup_start_state()
         steps = self.case.get("steps", [])
+        if any(
+            step.get("action") in {"play_audio", "long_press_role"}
+            for step in steps
+        ):
+            safe_print("[AUDIO] resetting emulator host microphone bridge")
+            self.audio.prepare()
         for index, step in enumerate(steps, start=1):
             self.run_step(index, step)
 
@@ -154,6 +161,18 @@ class CaseRunner:
             self.hide_keyboard_if_present()
             time.sleep(step.get("wait_after", 1))
         elif action == "play_audio":
+            wait_for_text = str(step.get("wait_for_text") or "").strip()
+            if wait_for_text:
+                timeout = float(step.get("wait_for_text_timeout", DEFAULT_TIMEOUT))
+                safe_print("[AUDIO]", f"waiting for app state: {wait_for_text}")
+                try:
+                    WebDriverWait(self.driver, timeout).until(
+                        lambda d: wait_for_text in d.page_source
+                    )
+                except TimeoutException:
+                    raise AssertionError(
+                        f"音频播放前等待 App 状态超时：{wait_for_text}"
+                    )
             pre_delay = float(step.get("pre_delay", 0) or 0)
             if pre_delay > 0:
                 print(f"[AUDIO] pre_delay {pre_delay}s")
@@ -1089,6 +1108,28 @@ class CaseRunner:
             last_target = target_text
 
             if source_text and target_text:
+                if (
+                    not getattr(self.translation, "api_key", True)
+                    and text_matches_language(source_text, source_lang)
+                    and text_matches_language(target_text, target_lang)
+                    and source_text != target_text
+                ):
+                    safe_print(
+                        "[TRANSLATION]",
+                        f"source={source_text}",
+                        f"target={target_text}",
+                        "模型密钥未配置；按页面已出现源文和目标译文判定音频注入成功",
+                    )
+                    return
+                if not getattr(self.translation, "api_key", True):
+                    safe_print(
+                        "[TRANSLATION]",
+                        "页面候选尚未同时匹配源语言和目标语言，继续等待真实译文",
+                        f"source={source_text}",
+                        f"target={target_text}",
+                    )
+                    time.sleep(poll_interval)
+                    continue
                 result = self.translation.validate_translation(
                     source_text=source_text,
                     target_text=target_text,

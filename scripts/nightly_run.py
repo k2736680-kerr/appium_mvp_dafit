@@ -42,6 +42,9 @@ DEFAULT_CONFIG = {
     "stop_appium_after_run": True,
     "appium_command": "appium.cmd",
     "appium_args": ["--address", "0.0.0.0", "--port", "4723"],
+    "appium_server": "http://127.0.0.1:4723",
+    "appium_udid": "emulator-5554",
+    "appium_auto_restart": True,
     "start_emulator_if_missing": True,
     "stop_emulator_after_run": True,
     "emulator_exe": r"E:\android_sdk\emulator\emulator.exe",
@@ -54,6 +57,13 @@ DEFAULT_CONFIG = {
     "auro_login_password": "",
     "adb_exe": r"E:\android_sdk\platform-tools\adb.exe",
     "android_udid": "emulator-5554",
+    "android_adb_serial": "",
+    "audio_injection_mode": "host",
+    "device_farm_docker_command": "docker",
+    "device_farm_ssh_target": "",
+    "device_farm_emulator_container": "",
+    "device_farm_pulse_server": "tcp:127.0.0.1:4713",
+    "device_farm_pulse_sink": "virtual_mic",
     "emulator_boot_timeout_seconds": 240,
     "emulator_post_boot_wait_seconds": 25,
     "pytest_timeout_seconds": 14400,
@@ -251,9 +261,13 @@ def adb_devices(config):
     return devices
 
 
+def adb_serial(config):
+    return config.get("android_adb_serial") or config.get("android_udid")
+
+
 def adb_shell(config, args, timeout=10):
     adb = config.get("adb_exe") or "adb"
-    udid = config.get("android_udid")
+    udid = adb_serial(config)
     command = [adb]
     if udid:
         command.extend(["-s", udid])
@@ -282,7 +296,7 @@ def device_shell_ready(config, timeout=10):
 def wait_for_device_ready(config, timeout_seconds=None):
     timeout_seconds = int(timeout_seconds or config.get("emulator_boot_timeout_seconds", 240))
     post_boot_wait_seconds = float(config.get("emulator_post_boot_wait_seconds", 0) or 0)
-    udid = config.get("android_udid")
+    udid = adb_serial(config)
     deadline = time.time() + timeout_seconds
     last_state = "not checked"
 
@@ -383,7 +397,7 @@ def stop_emulator(config):
         return
 
     adb = config.get("adb_exe") or "adb"
-    udid = config.get("android_udid")
+    udid = adb_serial(config)
     if udid and udid in adb_devices(config):
         run([adb, "-s", udid, "emu", "kill"], timeout=20)
         time.sleep(2)
@@ -412,7 +426,7 @@ def register_runtime_cleanup(config):
 
 
 def ensure_emulator(config):
-    udid = config.get("android_udid")
+    udid = adb_serial(config)
     devices = adb_devices(config)
     if (udid and udid in devices) or (not udid and devices):
         if wait_for_device_ready(config, timeout_seconds=60):
@@ -810,7 +824,18 @@ def run_pytest(config):
     env["APPIUM_COMMAND"] = str(config.get("appium_command") or "appium.cmd")
     env["APPIUM_ARGS_JSON"] = json.dumps(config.get("appium_args", []), ensure_ascii=False)
     env["ANDROID_ADB"] = str(config.get("adb_exe") or "adb")
-    env["ANDROID_UDID"] = str(config.get("android_udid") or "")
+    legacy_udid = str(config.get("android_udid") or "")
+    env["ANDROID_UDID"] = legacy_udid
+    env["ANDROID_ADB_SERIAL"] = str(adb_serial(config) or "")
+    env["APPIUM_UDID"] = str(config.get("appium_udid") or legacy_udid)
+    env["APPIUM_SERVER"] = str(config.get("appium_server") or "http://127.0.0.1:4723")
+    env["APPIUM_AUTO_RESTART"] = "1" if config.get("appium_auto_restart", True) else "0"
+    env["AUDIO_INJECTION_MODE"] = str(config.get("audio_injection_mode") or "host")
+    env["DEVICE_FARM_DOCKER_COMMAND"] = str(config.get("device_farm_docker_command") or "docker")
+    env["DEVICE_FARM_SSH_TARGET"] = str(config.get("device_farm_ssh_target") or "")
+    env["DEVICE_FARM_EMULATOR_CONTAINER"] = str(config.get("device_farm_emulator_container") or "")
+    env["DEVICE_FARM_PULSE_SERVER"] = str(config.get("device_farm_pulse_server") or "tcp:127.0.0.1:4713")
+    env["DEVICE_FARM_PULSE_SINK"] = str(config.get("device_farm_pulse_sink") or "virtual_mic")
     env["ANDROID_EMULATOR"] = str(config.get("emulator_exe") or "")
     env["ANDROID_AVD"] = str(config.get("emulator_avd") or "")
     env["ANDROID_EMULATOR_EXTRA_ARGS"] = " ".join(
