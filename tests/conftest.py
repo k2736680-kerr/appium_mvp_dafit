@@ -1,7 +1,6 @@
 import html
 import json
 import os
-import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -875,11 +874,6 @@ def pytest_sessionfinish(session, exitstatus):
 
     bundle_dir = Path(bundle_dir_value)
     _write_recording_report(bundle_dir, session, exitstatus)
-
-    prelude_dir = PROJECT_ROOT / "artifacts" / "_recording_prelude"
-    bundle_prelude_dir = bundle_dir / "artifacts" / "_recording_prelude"
-    if prelude_dir.exists() and not bundle_prelude_dir.exists():
-        shutil.copytree(prelude_dir, bundle_prelude_dir, dirs_exist_ok=True)
 
 
 @pytest.hookimpl(hookwrapper=True)

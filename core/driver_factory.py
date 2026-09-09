@@ -1,4 +1,5 @@
 import json
+import locale
 import os
 import shutil
 import subprocess
@@ -29,6 +30,7 @@ from core.config import (
     LAUNCHER_PACKAGE,
     PROJECT_ROOT,
 )
+from core.runtime_isolation import APPIUM_BASE_PATH, owned_appium_pids_on_port, pids_listening_on_port
 
 
 TRANSIENT_SESSION_ERRORS = (
@@ -44,7 +46,14 @@ TRANSIENT_SESSION_ERRORS = (
     "connection refused",
     "cannot be proxied to uiautomator2 server",
     "instrumentation process is not running",
+    "waiting for the root accessibilitynodeinfo",
 )
+
+NON_TRANSIENT_SESSION_ERRORS = (
+    "target_app_missing",
+)
+
+SUBPROCESS_ENCODING = locale.getencoding()
 
 _ANDROID_POST_BOOT_WAIT_DONE = False
 
@@ -62,6 +71,8 @@ def _run_adb(args, timeout=15):
         [_adb_command(), *args],
         capture_output=True,
         text=True,
+        encoding=SUBPROCESS_ENCODING,
+        errors="replace",
         timeout=timeout,
         check=False,
     )
@@ -147,16 +158,25 @@ def _start_emulator_detached():
         command.extend(["-audio", ANDROID_AUDIO_BACKEND])
     if ANDROID_EMULATOR_EXTRA_ARGS:
         command.extend(arg for arg in ANDROID_EMULATOR_EXTRA_ARGS.split() if arg)
+    if "-no-snapshot-save" not in command:
+        command.append("-no-snapshot-save")
     print(f"[RECOVERY] Starting Android emulator: {ANDROID_AVD}")
     _start_detached(command, hidden=False)
     return True
 
 
-def _kill_emulator_processes():
-    if os.name != "nt":
-        return
-    subprocess.run(["taskkill", "/IM", "emulator.exe", "/F"], capture_output=True, text=True, timeout=20, check=False)
-    subprocess.run(["taskkill", "/IM", "qemu-system-x86_64.exe", "/F"], capture_output=True, text=True, timeout=20, check=False)
+def _stop_target_emulator():
+    """Stop only this project's configured emulator.
+
+    The host ADB daemon is shared by every connected phone and emulator.  A
+    global ``adb kill-server`` or image-wide ``taskkill`` disconnects unrelated
+    test runs, so recovery must stay scoped to ``ANDROID_ADB_SERIAL``.
+    """
+    device = ANDROID_ADB_SERIAL or APPIUM_UDID
+    if not str(device).startswith("emulator-"):
+        return False
+    result = _run_adb(["-s", str(device), "emu", "kill"], timeout=20)
+    return result.returncode == 0
 
 
 def ensure_android_device_ready(restart_if_unresponsive=False):
@@ -176,6 +196,10 @@ def ensure_android_device_ready(restart_if_unresponsive=False):
     if device and not restart_if_unresponsive:
         if wait_for_android_device_ready(timeout_seconds=60):
             return
+        raise RuntimeError(
+            f"Android device is listed but not ready: {device}; "
+            "refusing to restart the emulator during a recording retry"
+        )
 
     if not ANDROID_AUTO_START_EMULATOR:
         if device:
@@ -191,12 +215,17 @@ def ensure_android_device_ready(restart_if_unresponsive=False):
 
     if device:
         print(f"[RECOVERY] Android device is listed but unresponsive: {device}; restarting emulator")
-        _kill_emulator_processes()
-        subprocess.run([_adb_command(), "kill-server"], capture_output=True, text=True, timeout=15, check=False)
-        subprocess.run([_adb_command(), "start-server"], capture_output=True, text=True, timeout=15, check=False)
+        _stop_target_emulator()
+        subprocess.run(
+            [_adb_command(), "start-server"], capture_output=True, text=True,
+            encoding=SUBPROCESS_ENCODING, errors="replace", timeout=15, check=False
+        )
 
     if not device:
-        subprocess.run([_adb_command(), "start-server"], capture_output=True, text=True, timeout=15, check=False)
+        subprocess.run(
+            [_adb_command(), "start-server"], capture_output=True, text=True,
+            encoding=SUBPROCESS_ENCODING, errors="replace", timeout=15, check=False
+        )
         try:
             refreshed_devices, _ = _connected_adb_devices()
         except Exception:
@@ -207,9 +236,11 @@ def ensure_android_device_ready(restart_if_unresponsive=False):
 
         # A stale emulator process can hold the AVD lock while adb reports no devices.
         # Clear it before launching the configured AVD so the boot attempt is not doomed.
-        _kill_emulator_processes()
-        subprocess.run([_adb_command(), "kill-server"], capture_output=True, text=True, timeout=15, check=False)
-        subprocess.run([_adb_command(), "start-server"], capture_output=True, text=True, timeout=15, check=False)
+        _stop_target_emulator()
+        subprocess.run(
+            [_adb_command(), "start-server"], capture_output=True, text=True,
+            encoding=SUBPROCESS_ENCODING, errors="replace", timeout=15, check=False
+        )
 
     if not _start_emulator_detached() and not wait_for_android_device_ready(timeout_seconds=30):
         raise RuntimeError(
@@ -254,7 +285,7 @@ def assert_appium_server_running():
         "Appium Server 未启动或无法连接。\n"
         f"当前地址：{APPIUM_SERVER}\n"
         "请先另开一个 CMD 窗口执行：\n"
-        "appium --address 0.0.0.0 --port 4723\n"
+        "appium --address 0.0.0.0 --port 4725 --base-path /appium-mvp\n"
         f"原始错误：{exc}"
     )
 
@@ -272,33 +303,7 @@ def _appium_port():
     try:
         return int(APPIUM_SERVER.rstrip("/").rsplit(":", 1)[1])
     except Exception:
-        return 4723
-
-
-def _pids_listening_on_port(port):
-    if os.name != "nt":
-        return []
-
-    try:
-        result = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except Exception:
-        return []
-
-    pids = set()
-    marker = f":{port}"
-    for line in (result.stdout or "").splitlines():
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        if parts[1].endswith(marker) and parts[3].upper() == "LISTENING" and parts[-1].isdigit():
-            pids.add(parts[-1])
-    return sorted(pids)
+        return 4725
 
 
 def _start_detached(command, hidden=True):
@@ -353,7 +358,15 @@ def _appium_start_command():
         except json.JSONDecodeError:
             pass
 
-    return [command, "--address", "0.0.0.0", "--port", str(_appium_port())]
+    return [
+        command,
+        "--address",
+        "0.0.0.0",
+        "--port",
+        str(_appium_port()),
+        "--base-path",
+        APPIUM_BASE_PATH,
+    ]
 
 
 def restart_appium_server(reason=""):
@@ -364,12 +377,35 @@ def restart_appium_server(reason=""):
     port = _appium_port()
     print(f"[RECOVERY] Restarting Appium on port {port}. reason={reason}")
 
-    for pid in _pids_listening_on_port(port):
-        subprocess.run(["taskkill", "/PID", pid, "/F"], capture_output=True, text=True, check=False)
+    listeners = pids_listening_on_port(port)
+    owned_pids = owned_appium_pids_on_port(port)
+    if listeners and not owned_pids:
+        print(f"[RECOVERY] Refusing to terminate unowned process on Appium port {port}: pid={listeners}")
+        return False
 
-    adb = _adb_command()
-    subprocess.run([adb, "kill-server"], capture_output=True, text=True, timeout=15, check=False)
-    subprocess.run([adb, "start-server"], capture_output=True, text=True, timeout=15, check=False)
+    for pid in owned_pids:
+        subprocess.run(
+            ["taskkill", "/PID", pid, "/T", "/F"],
+            capture_output=True,
+            text=True,
+            encoding=SUBPROCESS_ENCODING,
+            errors="replace",
+            check=False,
+        )
+
+    # taskkill can return before Windows releases the listener. Starting the
+    # replacement immediately makes appium.cmd exit with EADDRINUSE/code 1.
+    for _ in range(20):
+        remaining = pids_listening_on_port(port)
+        if not remaining:
+            break
+        if not all(pid in owned_pids for pid in remaining):
+            print(f"[RECOVERY] Appium port {port} is now owned by another process: pid={remaining}")
+            return False
+        time.sleep(0.25)
+    else:
+        print(f"[RECOVERY] Appium port {port} was not released after stopping pid={owned_pids}")
+        return False
 
     process = _start_detached(_appium_start_command())
     ready_count = 0
@@ -394,7 +430,37 @@ def restart_appium_server(reason=""):
 
 def is_transient_session_error(exc):
     text = f"{type(exc).__name__}: {exc}".lower()
+    if any(marker in text for marker in NON_TRANSIENT_SESSION_ERRORS):
+        return False
+    if "activity class" in text and "does not exist" in text:
+        return False
+    if "error type 3" in text and "activity" in text:
+        return False
     return any(marker in text for marker in TRANSIENT_SESSION_ERRORS)
+
+
+def assert_target_app_available(device):
+    package = _run_adb(["-s", device, "shell", "pm", "path", APP_PACKAGE], timeout=15)
+    activity = _run_adb(
+        [
+            "-s", device, "shell", "cmd", "package", "resolve-activity", "--brief",
+            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER",
+            APP_PACKAGE,
+        ],
+        timeout=15,
+    )
+    expected_activity = APP_ACTIVITY if APP_ACTIVITY.startswith(APP_PACKAGE) else f"{APP_PACKAGE}{APP_ACTIVITY}"
+    expected_components = {
+        f"{APP_PACKAGE}/{APP_ACTIVITY}",
+        f"{APP_PACKAGE}/{expected_activity}",
+    }
+    resolved = (activity.stdout or "").strip()
+    activity_found = expected_activity in resolved or any(component in resolved for component in expected_components)
+    if package.returncode != 0 or not (package.stdout or "").strip() or activity.returncode != 0 or not activity_found:
+        raise RuntimeError(
+            "TARGET_APP_MISSING: configured Android application is not installed or its launcher Activity "
+            f"is unavailable on {device}: {APP_PACKAGE}/{APP_ACTIVITY}; resolved={resolved!r}"
+        )
 
 
 def _new_remote_driver(caps):
@@ -437,6 +503,7 @@ def create_driver(start_mode="app", no_reset=True):
       - launcher: start the launcher for recordings that begin from the icon
     """
     assert_runtime_ready()
+    assert_target_app_available(ANDROID_ADB_SERIAL or APPIUM_UDID)
 
     if start_mode == "launcher":
         app_package = LAUNCHER_PACKAGE

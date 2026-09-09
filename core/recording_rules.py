@@ -137,6 +137,27 @@ def is_phone_toggle_case(title: str) -> bool:
     return "手机模式" in title or "手机耳机" in title
 
 
+def is_recorded_phone_language_step(step: dict) -> bool:
+    """Legacy phone recordings contain brittle manual language-picker clicks.
+
+    Direction is now calibrated from the live UI immediately before recording,
+    so replaying those historical clicks can leave the picker open and prevent
+    the calibrator from seeing the two page selectors.
+    """
+    if step.get("action") != "click":
+        return False
+    value = str((step.get("locator") or {}).get("value") or "")
+    labels = (
+        "简体中文",
+        "中文（简体）",
+        "English",
+        "日本語",
+        "한국어",
+        "Français",
+    )
+    return any(label in value for label in labels)
+
+
 def find_recording_boundary_steps(steps: list[dict]):
     start_index = None
     stop_index = None
@@ -233,8 +254,12 @@ def infer_image_translation_languages(title: str):
 
     for language_name, language_code in LANGUAGE_NAME_TO_CODE.items():
         if language_name in title:
-            target_lang = "en" if language_code == "zh" else "zh"
-            return language_code, target_lang
+            # Image cases name the selected output language (the selector in
+            # the top-right of the camera page), while the controlled gallery
+            # fixture contains Chinese text.
+            if language_code == "zh":
+                return "en", "zh"
+            return "zh", language_code
 
     return None, None
 
@@ -292,6 +317,8 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
 
     use_long_press = is_long_press_recording_case(title)
     use_phone_toggle = is_phone_toggle_case(title)
+    if use_phone_toggle and enable_translation:
+        steps = [step for step in steps if not is_recorded_phone_language_step(step)]
     start_index, stop_index = find_recording_boundary_steps(steps)
     if start_index is None or (stop_index is None and not use_long_press and not use_phone_toggle):
         raise AssertionError(
@@ -314,6 +341,14 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
 
     for index, step in enumerate(steps):
         if enable_translation and index == start_index:
+            if use_phone_toggle:
+                augmented_steps.append({
+                    "action": "ensure_phone_translation_direction",
+                    "name": "校准手机模式语言方向",
+                    "source_lang": metadata["source_lang"],
+                    "target_lang": metadata["target_lang"],
+                    "check_blockers": False,
+                })
             augmented_steps.append({
                 "action": "mark_page_texts",
                 "name": "记录翻译前页面文本",
@@ -367,10 +402,7 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
 
         if index == start_index:
             augmented_steps.append(
-                build_audio_step(
-                    audio_lang,
-                    wait_for_text="已连接" if "单向模式" in title else None,
-                )
+                build_audio_step(audio_lang)
             )
             if AUDIO_SETTLE_SECONDS > 0:
                 augmented_steps.append(build_audio_settle_step())

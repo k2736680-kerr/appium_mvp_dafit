@@ -174,6 +174,35 @@ class FakeFormDriver:
         self.submitted = True
 
 
+class FakeConsentDriver:
+    def __init__(self):
+        self.consent_visible = True
+        self.clicks = []
+
+    @property
+    def page_source(self):
+        if self.consent_visible:
+            return (
+                '<hierarchy><node content-desc="AI 数据共享同意" />'
+                '<node content-desc="为了提供 AI 对话、语音识别、翻译与播报能力" />'
+                '<node content-desc="确认" /></hierarchy>'
+            )
+        return '<hierarchy><node content-desc="语音对话" /></hierarchy>'
+
+    def find_element(self, _by, value):
+        if value == "确认" and self.consent_visible:
+            return FakeElement(self, "confirm", self.dismiss_consent)
+        raise NoSuchElementException(value)
+
+    def execute_script(self, name, payload):
+        self.clicks.append((name, payload))
+        if name == "mobile: clickGesture" and self.consent_visible:
+            self.dismiss_consent()
+
+    def dismiss_consent(self):
+        self.consent_visible = False
+
+
 @pytest.fixture(autouse=True)
 def fast_runner_sleep(monkeypatch):
     monkeypatch.setattr("core.runner.time.sleep", lambda _seconds: None)
@@ -186,6 +215,15 @@ def make_runner(monkeypatch, tmp_path, driver, account="user@example.com", passw
     monkeypatch.setattr("core.runner.DEFAULT_TIMEOUT", 0.1)
     monkeypatch.setenv("APPIUM_ARTIFACTS_ROOT", str(tmp_path))
     return CaseRunner(driver, {"case_id": "unit_login"})
+
+
+def test_dismisses_ai_data_sharing_consent(monkeypatch, tmp_path):
+    driver = FakeConsentDriver()
+    runner = make_runner(monkeypatch, tmp_path, driver)
+
+    assert runner.dismiss_known_transient_dialogs() is True
+    assert driver.consent_visible is False
+    assert runner.dismiss_known_transient_dialogs() is False
 
 
 def test_tap_my_account_auto_logs_in_and_retries(monkeypatch, tmp_path):

@@ -139,6 +139,7 @@ def test_phone_mode_recording_uses_current_click_toggle():
 
     assert [step["action"] for step in augmented_steps] == [
         "tap_point",
+        "ensure_phone_translation_direction",
         "mark_page_texts",
         "tap_point",
         "play_audio",
@@ -146,14 +147,41 @@ def test_phone_mode_recording_uses_current_click_toggle():
         "tap_point",
         "assert_translation",
     ]
-    play_step = augmented_steps[3]
+    direction_step = augmented_steps[1]
+    assert direction_step["source_lang"] == "en"
+    assert direction_step["target_lang"] == "zh"
+    play_step = augmented_steps[4]
     assert play_step["file"] == "assets/audio/source_en.wav"
     assert play_step["wait_for_text"] == "点击停止说话"
-    assert augmented_steps[5]["name"] == "再次点击底部麦克风停止录音"
+    assert augmented_steps[6]["name"] == "再次点击底部麦克风停止录音"
     assert metadata["audio_lang"] == "en"
 
 
-def test_single_direction_audio_waits_for_recording_connection_state():
+def test_phone_mode_discards_legacy_language_picker_clicks_before_calibration():
+    steps = [
+        {"action": "click", "name": "进入手机模式", "locator": {"by": "accessibility_id", "value": "开始手机模式"}},
+        {"action": "click", "name": "旧录制语言", "locator": {"by": "accessibility_id", "value": "English"}},
+        {"action": "click", "name": "旧录制语言", "locator": {"by": "android_uiautomator", "value": 'new UiSelector().description("中文（简体）\\nChinese (Simplified)")'}},
+        {"action": "click", "name": "点击手机模式麦克风按钮", "locator": {"by": "accessibility_id", "value": "手机麦克风"}},
+    ]
+
+    augmented_steps, _metadata = augment_recording_steps(
+        "[翻译]手机模式_点击录音_中文转英文",
+        steps,
+        enable_audio=True,
+        enable_translation=True,
+    )
+
+    locator_values = [
+        (step.get("locator") or {}).get("value")
+        for step in augmented_steps
+    ]
+    assert "English" not in locator_values
+    assert not any(value and "中文（简体）" in value for value in locator_values)
+    assert augmented_steps[1]["action"] == "ensure_phone_translation_direction"
+
+
+def test_single_direction_audio_does_not_require_bluetooth_connection_state():
     steps = [
         {"action": "tap_point", "name": "点击底部麦克风按钮"},
         {"action": "tap_point", "name": "点击底部麦克风按钮"},
@@ -167,7 +195,7 @@ def test_single_direction_audio_waits_for_recording_connection_state():
     )
 
     play_step = next(step for step in augmented_steps if step["action"] == "play_audio")
-    assert play_step["wait_for_text"] == "已连接"
+    assert "wait_for_text" not in play_step
 
 
 def test_augment_recording_steps_long_press_skips_recorded_stop_click():

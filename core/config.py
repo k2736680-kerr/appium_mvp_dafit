@@ -41,7 +41,7 @@ def bool_env_or_local(env_name: str, local_name: str, default=True) -> bool:
         return str(value).lower() not in {"0", "false", "no"}
     return default
 
-APPIUM_SERVER = os.environ.get("APPIUM_SERVER", "http://127.0.0.1:4723")
+APPIUM_SERVER = os.environ.get("APPIUM_SERVER", "http://127.0.0.1:4725/appium-mvp")
 ANDROID_UDID = os.environ.get("ANDROID_UDID", "emulator-5554")
 ANDROID_ADB_SERIAL = os.environ.get("ANDROID_ADB_SERIAL", ANDROID_UDID)
 APPIUM_UDID = os.environ.get("APPIUM_UDID", ANDROID_UDID)
@@ -54,7 +54,7 @@ ANDROID_EMULATOR = os.environ.get(
     r"D:\AutoTestTools\Tools\AndroidSdk\emulator\emulator.exe",
 )
 ANDROID_AVD = os.environ.get("ANDROID_AVD", "Pixel_8a")
-ANDROID_EMULATOR_EXTRA_ARGS = os.environ.get("ANDROID_EMULATOR_EXTRA_ARGS", "-no-snapshot-load")
+ANDROID_EMULATOR_EXTRA_ARGS = os.environ.get("ANDROID_EMULATOR_EXTRA_ARGS", "")
 ANDROID_AUDIO_BACKEND = os.environ.get("ANDROID_AUDIO_BACKEND", "dsound")
 ANDROID_BOOT_TIMEOUT_SECONDS = int(os.environ.get("ANDROID_BOOT_TIMEOUT_SECONDS", "240"))
 ANDROID_POST_BOOT_WAIT_SECONDS = float(os.environ.get("ANDROID_POST_BOOT_WAIT_SECONDS", "0"))

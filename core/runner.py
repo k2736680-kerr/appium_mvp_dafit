@@ -73,6 +73,22 @@ ROLE_POINTS = {
 
 MIC_POINT_RESOLVE_TIMEOUT = 5
 
+PHONE_LANGUAGE_LABELS = {
+    "zh": ("简体中文", "中文（简体）"),
+    "en": ("English",),
+    "ja": ("日本語",),
+    "ko": ("한국어",),
+    "fr": ("Français",),
+}
+
+PHONE_LANGUAGE_OPTIONS = {
+    "zh": "中文（简体）",
+    "en": "English",
+    "ja": "日本語",
+    "ko": "한국어",
+    "fr": "Français",
+}
+
 
 class CaseRunner:
     def __init__(self, driver, case_data):
@@ -139,6 +155,14 @@ class CaseRunner:
             self.action_tap_first_album_photo(step)
         elif action == "tap_text_center":
             self.action_tap_text_center(step)
+        elif action == "start_meeting_recording":
+            self.action_start_meeting_recording(step)
+        elif action == "open_first_meeting_record":
+            self.action_open_first_meeting_record(step)
+        elif action == "open_meeting_rename":
+            self.action_open_meeting_rename(step)
+        elif action == "ensure_phone_translation_direction":
+            self.action_ensure_phone_translation_direction(step)
         elif action == "tap_ratio":
             self.action_tap_ratio(step)
         elif action in ("tap_point", "tap_coordinate"):
@@ -217,6 +241,32 @@ class CaseRunner:
         try:
             page_source = self.driver.page_source
         except Exception:
+            return False
+
+        # The AI area asks for data-sharing consent the first time it is opened.
+        # This prompt is outside the recorded flow, so clear it after the
+        # preceding "AI \u52a9\u624b" click before the next recorded locator runs.
+        if "AI \u6570\u636e\u5171\u4eab\u540c\u610f" in page_source:
+            for locator in (
+                {"by": "accessibility_id", "value": "\u786e\u8ba4"},
+                {
+                    "by": "android_uiautomator",
+                    "value": 'new UiSelector().text("\u786e\u8ba4")',
+                },
+            ):
+                try:
+                    el = self.optional_element(locator, timeout=1)
+                    if el:
+                        self.click_element_center(el)
+                        safe_print("[DISMISS_CONSENT]", "clicked=\u786e\u8ba4")
+                        time.sleep(0.5)
+                        return True
+                except Exception:
+                    continue
+            safe_print(
+                "[DISMISS_CONSENT]",
+                "consent prompt present but no confirm button found",
+            )
             return False
 
         if "\u8bf7\u4fdd\u6301\u5c4f\u5e55\u5f00\u542f" not in page_source:
@@ -463,9 +513,216 @@ class CaseRunner:
         )
         time.sleep(step.get("wait_after", 1))
 
+    def _clickable_view_elements(self):
+        by, value = to_appium_locator({"by": "class_name", "value": "android.view.View"})
+        try:
+            elements = self.driver.find_elements(by, value)
+        except Exception:
+            return []
+        result = []
+        for element in elements:
+            try:
+                if str(element.get_attribute("clickable")).lower() == "true":
+                    result.append(element)
+            except Exception:
+                continue
+        return result
+
+    def _wait_page_contains_any(self, texts, timeout):
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                lambda d: any(text in d.page_source for text in texts)
+            )
+            return True
+        except TimeoutException:
+            return False
+
+    def action_start_meeting_recording(self, step):
+        """Start a meeting recording and prove that the recording page opened."""
+        active_markers = ("结束录制", "录制中")
+        if all(marker in self.driver.page_source for marker in active_markers):
+            return
+
+        size = self.driver.get_window_size()
+        for attempt in range(1, int(step.get("attempts", 3)) + 1):
+            candidates = []
+            for element in self._clickable_view_elements():
+                rect = element.rect
+                center_x = rect["x"] + rect["width"] / 2
+                if (
+                    rect["y"] >= size["height"] * 0.78
+                    and rect["width"] <= size["width"] * 0.45
+                    and abs(center_x - size["width"] / 2) <= size["width"] * 0.20
+                ):
+                    candidates.append(element)
+
+            if candidates:
+                target = max(candidates, key=lambda item: item.rect["y"])
+                self.click_element_center(target)
+            else:
+                self.tap_ratio(0.5, 0.90)
+
+            if self._wait_page_contains_any(("结束录制",), step.get("state_timeout", 10)):
+                if "录制中" in self.driver.page_source or "暂停" in self.driver.page_source:
+                    safe_print("[MEETING_RECORD]", f"started on attempt {attempt}")
+                    time.sleep(step.get("wait_after", 1))
+                    return
+            time.sleep(step.get("retry_wait", 1))
+
+        raise AssertionError("会议记录录制按钮点击后未进入录制中页面")
+
+    def action_open_first_meeting_record(self, step):
+        if "会议记录详情" in self.driver.page_source:
+            return
+        size = self.driver.get_window_size()
+        for attempt in range(1, int(step.get("attempts", 3)) + 1):
+            candidates = []
+            for element in self._clickable_view_elements():
+                rect = element.rect
+                description = str(element.get_attribute("content-desc") or "").strip()
+                if (
+                    description
+                    and size["height"] * 0.12 <= rect["y"] < size["height"] * 0.78
+                    and rect["width"] >= size["width"] * 0.70
+                ):
+                    candidates.append(element)
+            if not candidates:
+                time.sleep(step.get("retry_wait", 1))
+                continue
+            target = min(candidates, key=lambda item: item.rect["y"])
+            self.click_element_center(target)
+            if self._wait_page_contains_any(("会议记录详情",), step.get("state_timeout", 8)):
+                safe_print("[MEETING_RECORD]", f"opened first record on attempt {attempt}")
+                time.sleep(step.get("wait_after", 1))
+                return
+        raise AssertionError("会议记录列表中未能打开第一条记录")
+
+    def action_open_meeting_rename(self, step):
+        if "android.widget.EditText" in self.driver.page_source:
+            return
+        size = self.driver.get_window_size()
+        for attempt in range(1, int(step.get("attempts", 3)) + 1):
+            candidates = []
+            for element in self._clickable_view_elements():
+                rect = element.rect
+                if (
+                    rect["x"] >= size["width"] * 0.70
+                    and size["height"] * 0.12 <= rect["y"] <= size["height"] * 0.35
+                    and rect["width"] <= size["width"] * 0.25
+                ):
+                    candidates.append(element)
+            if candidates:
+                target = min(candidates, key=lambda item: item.rect["y"])
+                self.click_element_center(target)
+            else:
+                self.tap_ratio(0.86, 0.20)
+            if self._wait_page_contains_any(("android.widget.EditText",), step.get("state_timeout", 5)):
+                safe_print("[MEETING_RECORD]", f"rename dialog opened on attempt {attempt}")
+                time.sleep(step.get("wait_after", 0.5))
+                return
+        raise AssertionError("会议记录详情页未能打开名称编辑框")
+
+    def _phone_language_slots(self):
+        candidates = []
+        for code, labels in PHONE_LANGUAGE_LABELS.items():
+            for label in labels:
+                by, value = to_appium_locator({"by": "accessibility_id", "value": label})
+                try:
+                    elements = self.driver.find_elements(by, value)
+                except Exception:
+                    elements = []
+                for element in elements:
+                    rect = element.rect
+                    center_y = int(rect["y"] + rect["height"] / 2)
+                    candidates.append((center_y, code, element))
+
+        # On the phone+headset page the top language is around y=1080 and the
+        # phone microphone language is around y=1450. Language picker options
+        # cover most of the screen, so require exactly the two compact page
+        # selectors before treating this as a direction state.
+        page_candidates = [item for item in candidates if 900 <= item[0] <= 1650]
+        page_candidates.sort(key=lambda item: item[0])
+        if len(page_candidates) < 2:
+            return None
+        top = page_candidates[0]
+        bottom = page_candidates[-1]
+        if top[0] >= 1300 or bottom[0] < 1300:
+            return None
+        return {
+            "top": {"code": top[1], "element": top[2]},
+            "bottom": {"code": bottom[1], "element": bottom[2]},
+        }
+
+    def _select_phone_language(self, slot, language_code):
+        slots = self._phone_language_slots()
+        if not slots:
+            raise AssertionError("无法识别手机+耳机页面的顶部/底部语言选择器")
+        self.click_element_center(slots[slot]["element"])
+        option = PHONE_LANGUAGE_OPTIONS[language_code]
+        locator = {
+            "by": "android_uiautomator",
+            "value": f'new UiSelector().descriptionContains("{option}")',
+        }
+        element = self.wait_for_element(locator, timeout=5)
+        self.click_element_center(element)
+        time.sleep(0.8)
+
+    def action_ensure_phone_translation_direction(self, step):
+        source_lang = step.get("source_lang")
+        target_lang = step.get("target_lang")
+        if source_lang not in PHONE_LANGUAGE_OPTIONS or target_lang not in PHONE_LANGUAGE_OPTIONS:
+            raise ValueError(
+                "ensure_phone_translation_direction 不支持的语言方向："
+                f"{source_lang}->{target_lang}"
+            )
+        if source_lang == target_lang:
+            raise ValueError("手机模式源语言与目标语言不能相同")
+
+        slots = self._phone_language_slots()
+        if not slots:
+            raise AssertionError("当前页面不是可识别的手机+耳机翻译页面")
+        if slots["bottom"]["code"] == source_lang and slots["top"]["code"] == target_lang:
+            safe_print(
+                "[PHONE_DIRECTION]",
+                f"already correct: phone={source_lang}, headset={target_lang}",
+            )
+            return
+
+        # Auro ignores attempts to select the language already used by the
+        # opposite side. Use a third language temporarily, then set phone input
+        # (bottom) and headset output (top) explicitly.
+        occupied = {source_lang, target_lang, slots["bottom"]["code"]}
+        temporary = next(code for code in ("ja", "ko", "fr") if code not in occupied)
+        self._select_phone_language("top", temporary)
+        self._select_phone_language("bottom", source_lang)
+        self._select_phone_language("top", target_lang)
+
+        slots = self._phone_language_slots()
+        if (
+            not slots
+            or slots["bottom"]["code"] != source_lang
+            or slots["top"]["code"] != target_lang
+        ):
+            actual = None if not slots else (
+                f"phone={slots['bottom']['code']}, headset={slots['top']['code']}"
+            )
+            raise AssertionError(
+                "手机模式语言方向设置失败："
+                f"expected phone={source_lang}, headset={target_lang}; actual={actual}"
+            )
+        safe_print(
+            "[PHONE_DIRECTION]",
+            f"phone={source_lang}, headset={target_lang}",
+        )
+        time.sleep(step.get("wait_after", 0.5))
+
     def action_tap_first_album_photo(self, step):
         timeout = float(step.get("timeout", DEFAULT_TIMEOUT))
-        prefixes = step.get("description_contains") or ["照片拍摄于", "Photo taken"]
+        prefixes = step.get("description_contains") or [
+            "拍摄于",
+            "照片拍摄于",
+            "Photo taken",
+        ]
         end_time = time.time() + timeout
         last_error = None
 
@@ -498,46 +755,7 @@ class CaseRunner:
                         f"tap=({x},{y})",
                     )
                     self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-                    time.sleep(step.get("wait_after", 1))
-                    return
-                if scroll_index < max_scrolls:
-                    self.driver.execute_script(
-                        "mobile: dragGesture",
-                        {"startX": 540, "startY": 2050, "endX": 540, "endY": 1200, "speed": 2500},
-                    )
-                    time.sleep(0.7)
-            raise AssertionError(
-                f"找不到相册测试图片分组 {album_month_text}；"
-                f"已滚动 {max_scrolls} 次；last_error={last_error}"
-            )
-
-        album_month_text = step.get("album_month_text")
-        if album_month_text:
-            locator = {
-                "by": "android_uiautomator",
-                "value": f'new UiSelector().text("{album_month_text}")',
-            }
-            by, value = to_appium_locator(locator)
-            max_scrolls = int(step.get("max_scrolls", 8))
-            for scroll_index in range(max_scrolls + 1):
-                try:
-                    elements = self.driver.find_elements(by, value)
-                except Exception as exc:
-                    last_error = exc
-                    elements = []
-                if elements:
-                    rect = elements[0].rect
-                    x = int(step.get("album_photo_x", 179))
-                    y = int(rect["y"] + rect["height"] + step.get("album_photo_offset_y", 180))
-                    safe_print(
-                        "[ALBUM_PHOTO_MONTH]",
-                        f"month={album_month_text}",
-                        f"scrolls={scroll_index}",
-                        f"header={rect}",
-                        f"tap=({x},{y})",
-                    )
-                    self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-                    time.sleep(step.get("wait_after", 1))
+                    self._after_album_photo_selected(step)
                     return
                 if scroll_index < max_scrolls:
                     self.driver.execute_script(
@@ -576,7 +794,7 @@ class CaseRunner:
                         f"tap=({x},{y})",
                     )
                     self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-                    time.sleep(step.get("wait_after", 1))
+                    self._after_album_photo_selected(step)
                     return
                 if scroll_index < max_scrolls:
                     self.driver.execute_script(
@@ -594,36 +812,6 @@ class CaseRunner:
                 f"找不到相册测试图片（日期包含 {photo_date_contains}），"
                 f"已滚动 {max_scrolls} 次；last_error={last_error}"
             )
-
-        # Inspector originally selected a concrete view instance.  The old
-        # implementation discarded that information and always chose the first
-        # thumbnail, so a newly-added gallery image silently changed all image
-        # translation cases.  Prefer the recorded target when it is available.
-        view_instance = step.get("view_instance")
-        if view_instance is not None:
-            locator = {
-                "by": "android_uiautomator",
-                "value": (
-                    'new UiSelector().className("android.view.View")'
-                    f".instance({int(view_instance)})"
-                ),
-            }
-            try:
-                el = self.wait_for_element(locator, timeout=timeout)
-                rect = el.rect
-                x = int(rect["x"] + rect["width"] / 2)
-                y = int(rect["y"] + rect["height"] / 2)
-                safe_print(
-                    "[ALBUM_PHOTO_RECORDED]",
-                    f"instance={view_instance}",
-                    f"rect={rect}",
-                    f"tap=({x},{y})",
-                )
-                self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-                time.sleep(step.get("wait_after", 1))
-                return
-            except Exception as exc:
-                last_error = exc
 
         while time.time() < end_time:
             for prefix in prefixes:
@@ -650,13 +838,43 @@ class CaseRunner:
                     f"tap=({x},{y})",
                 )
                 self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-                time.sleep(step.get("wait_after", 1))
+                self._after_album_photo_selected(step)
                 return
             time.sleep(0.5)
 
+        # Only use an Inspector instance as a last-resort compatibility path.
+        # Android 15 Photo Picker exposes a stable semantic description such as
+        # “拍摄于 ... 的照片”; view instances change whenever picker chrome or
+        # media count changes and can otherwise select the camera entry.
+        view_instance = step.get("view_instance")
+        if view_instance is not None:
+            locator = {
+                "by": "android_uiautomator",
+                "value": (
+                    'new UiSelector().className("android.view.View")'
+                    f".instance({int(view_instance)})"
+                ),
+            }
+            try:
+                el = self.wait_for_element(locator, timeout=1)
+                rect = el.rect
+                x = int(rect["x"] + rect["width"] / 2)
+                y = int(rect["y"] + rect["height"] / 2)
+                safe_print(
+                    "[ALBUM_PHOTO_RECORDED_FALLBACK]",
+                    f"instance={view_instance}",
+                    f"rect={rect}",
+                    f"tap=({x},{y})",
+                )
+                self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
+                self._after_album_photo_selected(step)
+                return
+            except Exception as exc:
+                last_error = exc
+
         page_source = self.driver.page_source
         match = re.search(
-            r'content-desc="[^"]*(?:照片拍摄于|Photo taken)[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+            r'content-desc="[^"]*(?:拍摄于|照片拍摄于|Photo taken)[^"]*"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
             page_source,
         )
         if match:
@@ -665,7 +883,7 @@ class CaseRunner:
             y = int((top + bottom) / 2)
             print("[ALBUM_PHOTO_XML]", f"bounds=({left},{top},{right},{bottom})", f"tap=({x},{y})")
             self.driver.execute_script("mobile: clickGesture", {"x": x, "y": y})
-            time.sleep(step.get("wait_after", 1))
+            self._after_album_photo_selected(step)
             return
 
         fallback = step.get("fallback_tap")
@@ -679,10 +897,19 @@ class CaseRunner:
                 "mobile: clickGesture",
                 {"x": int(fallback["x"]), "y": int(fallback["y"])},
             )
-            time.sleep(step.get("wait_after", 1))
+            self._after_album_photo_selected(step)
             return
 
         raise AssertionError("找不到 Google 相册第一张图片缩略图")
+
+    def _after_album_photo_selected(self, step):
+        time.sleep(step.get("wait_after", 1))
+        try:
+            self.context["album_result_baseline_screenshot"] = (
+                self.driver.get_screenshot_as_base64()
+            )
+        except Exception as exc:
+            safe_print("[ALBUM_PHOTO_BASELINE]", f"skipped: {exc}")
 
     def action_tap_text_center(self, step):
         texts = step.get("texts") or [step.get("text")]
@@ -732,6 +959,11 @@ class CaseRunner:
                 {"x": int(fallback["x"]), "y": int(fallback["y"])},
             )
             time.sleep(step.get("wait_after", 1))
+            return
+
+        if step.get("optional"):
+            safe_print("[TAP_TEXT_CENTER_OPTIONAL]", f"not present, skip: {texts}")
+            time.sleep(step.get("wait_after_missing", 0))
             return
 
         raise AssertionError(f"找不到文本元素: {texts}")
@@ -1211,6 +1443,54 @@ class CaseRunner:
                 raise AssertionError(
                     f"图片翻译校验前检测到阻断信息：{blocker}"
                 )
+
+            # Text translation already has a no-model fallback. Apply the same
+            # principle here: without a vision key we cannot judge semantics,
+            # but we can still prove that the controlled photo was accepted,
+            # translation finished, and Auro rendered a large result image.
+            if not getattr(self.image_translation, "api_key", True):
+                large_image = False
+                for match in re.finditer(
+                    r'class="android\.widget\.ImageView"[^>]*bounds="'
+                    r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+                    page_source,
+                ):
+                    left, top, right, bottom = [int(value) for value in match.groups()]
+                    if right - left >= 800 and bottom - top >= 1000:
+                        large_image = True
+                        break
+                screenshot_base64 = self.driver.get_screenshot_as_base64()
+                baseline = self.context.get("album_result_baseline_screenshot", "")
+                change_ratio = 0.0
+                if baseline:
+                    change_ratio = abs(len(screenshot_base64) - len(baseline)) / len(baseline)
+                elapsed = timeout - max(0, deadline - time.time())
+                settled_without_baseline = (
+                    not baseline
+                    and elapsed >= float(step.get("no_model_settle_seconds", 15))
+                )
+                if (
+                    "图片翻译" in page_source
+                    and large_image
+                    and (change_ratio >= 0.03 or settled_without_baseline)
+                ):
+                    safe_print(
+                        "[IMAGE_TRANSLATION]",
+                        "模型密钥未配置；按选图前后画面变化及大图结果判定流程通过",
+                        f"source_lang={step.get('source_lang')}",
+                        f"target_lang={step.get('target_lang')}",
+                        f"change_ratio={change_ratio:.3f}",
+                    )
+                    return
+
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise AssertionError(
+                        "图片翻译结果等待超时（模型密钥未配置）："
+                        f"large_image={large_image}, change_ratio={change_ratio:.3f}"
+                    )
+                time.sleep(min(poll_interval, remaining))
+                continue
 
             attempt += 1
             screenshot_base64 = self.driver.get_screenshot_as_base64()

@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import html
 import json
+import locale
 import mimetypes
 import os
 import re
@@ -21,8 +22,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime_isolation import owned_appium_pids_on_port, pids_listening_on_port
+
+
 REPORT_ROOT = PROJECT_ROOT / "reports"
 CONFIG_PATH = PROJECT_ROOT / "scripts" / "nightly_config.local.json"
 
@@ -41,17 +47,19 @@ DEFAULT_CONFIG = {
     "clean_runtime_before_run": True,
     "stop_appium_after_run": True,
     "appium_command": "appium.cmd",
-    "appium_args": ["--address", "0.0.0.0", "--port", "4723"],
-    "appium_server": "http://127.0.0.1:4723",
+    "appium_args": ["--address", "0.0.0.0", "--port", "4725", "--base-path", "/appium-mvp"],
+    "appium_server": "http://127.0.0.1:4725/appium-mvp",
     "appium_udid": "emulator-5554",
     "appium_auto_restart": True,
+    "app_package": "com.moyoung.auro.ai",
+    "app_activity": ".MainActivity",
     "start_emulator_if_missing": True,
     "stop_emulator_after_run": True,
     "emulator_exe": r"E:\android_sdk\emulator\emulator.exe",
     "emulator_avd": "Pixel_8a",
     "emulator_allow_host_audio": True,
     "emulator_audio_backend": "dsound",
-    "emulator_extra_args": ["-no-snapshot-load"],
+    "emulator_extra_args": [],
     "auro_auto_login": True,
     "auro_login_account": "",
     "auro_login_password": "",
@@ -81,6 +89,8 @@ DEFAULT_CONFIG = {
     "qiniu_upload_retry_backoff_seconds": 3,
     "qiniu_fallback_to_local_report": True,
 }
+
+SUBPROCESS_ENCODING = locale.getencoding()
 
 
 def load_config():
@@ -115,6 +125,8 @@ def run(command, timeout=None, env=None):
         cwd=PROJECT_ROOT,
         env=env,
         text=True,
+        encoding=SUBPROCESS_ENCODING,
+        errors="replace",
         capture_output=True,
         timeout=timeout,
         check=False,
@@ -229,7 +241,7 @@ def ensure_report_server(config):
 
 
 def appium_status_url():
-    return os.environ.get("APPIUM_SERVER", "http://127.0.0.1:4723").rstrip("/") + "/status"
+    return os.environ.get("APPIUM_SERVER", "http://127.0.0.1:4725/appium-mvp").rstrip("/") + "/status"
 
 
 def ensure_appium(config):
@@ -237,6 +249,13 @@ def ensure_appium(config):
         return
     if not config.get("start_appium_if_missing", True):
         return
+    port = appium_port_from_config(config)
+    listeners = pids_listening_on_port(port)
+    if listeners:
+        raise RuntimeError(
+            f"Appium 专用端口 {port} 已被非本项目服务占用（PID: {', '.join(listeners)}）；"
+            "为避免影响其他项目，本项目不会终止该进程。"
+        )
     start_detached([config["appium_command"], *config.get("appium_args", [])])
     for _ in range(60):
         if url_ok(appium_status_url(), timeout=1):
@@ -254,7 +273,7 @@ def adb_devices(config):
     adb = config.get("adb_exe") or "adb"
     result = run([adb, "devices"], timeout=15)
     devices = []
-    for line in (result.stdout or "").splitlines():
+    for line in (getattr(result, "stdout", "") or "").splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[1] == "device":
             devices.append(parts[0])
@@ -273,6 +292,138 @@ def adb_shell(config, args, timeout=10):
         command.extend(["-s", udid])
     command.extend(["shell", *args])
     return run(command, timeout=timeout)
+
+
+def adb_target(config, args, timeout=10):
+    adb = config.get("adb_exe") or "adb"
+    udid = adb_serial(config)
+    command = [adb]
+    if udid:
+        command.extend(["-s", udid])
+    command.extend(args)
+    return run(command, timeout=timeout)
+
+
+def running_emulator_avd(config):
+    """Return the AVD name behind the explicitly configured emulator serial."""
+    udid = str(adb_serial(config) or "")
+    if not udid.startswith("emulator-"):
+        return ""
+    result = adb_target(config, ["emu", "avd", "name"], timeout=10)
+    if result.returncode != 0:
+        return ""
+    return next(
+        (line.strip() for line in (result.stdout or "").splitlines() if line.strip() and line.strip() != "OK"),
+        "",
+    )
+
+
+def emulator_process_command_lines():
+    """Read emulator command lines without changing any process state."""
+    if os.name != "nt":
+        return []
+    script = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.Name -in @('emulator.exe','qemu-system-x86_64.exe',"
+        "'qemu-system-i386.exe','qemu-system-aarch64.exe') } | "
+        "ForEach-Object { $_.CommandLine }"
+    )
+    result = run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        timeout=15,
+    )
+    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def emulator_runtime_mismatch(config):
+    """Explain why an online emulator is unsafe to reuse, or return an empty string."""
+    udid = str(adb_serial(config) or "")
+    if not udid.startswith("emulator-"):
+        return ""
+
+    expected_avd = str(config.get("emulator_avd") or "").strip()
+    actual_avd = running_emulator_avd(config)
+    if expected_avd and actual_avd != expected_avd:
+        return f"AVD mismatch: expected={expected_avd!r}, actual={actual_avd!r}"
+
+    if os.name != "nt":
+        return ""
+
+    normalized_avd = expected_avd.lower()
+    candidates = []
+    for command_line in emulator_process_command_lines():
+        normalized = " ".join(command_line.lower().replace('"', "").split())
+        if normalized_avd and (
+            f"-avd {normalized_avd}" in normalized or f"-avd={normalized_avd}" in normalized
+        ):
+            candidates.append(normalized)
+    if not candidates:
+        return f"cannot verify the owner/launch command of AVD {expected_avd!r}"
+
+    # Nightly runs deliberately mutate app/system state.  Loading the curated
+    # baseline snapshot is desired, but Quick Boot must never overwrite that
+    # baseline when the emulator exits.
+    required_markers = [("snapshot write protection", ("-no-snapshot-save",))]
+    if config.get("emulator_allow_host_audio", True):
+        required_markers.append(("host microphone", ("-allow-host-audio",)))
+    audio_backend = str(config.get("emulator_audio_backend") or "").strip().lower()
+    if audio_backend:
+        required_markers.append(
+            ("audio backend", (f"-audio {audio_backend}", f"-audio={audio_backend}"))
+        )
+    for index, item in enumerate([str(arg) for arg in config.get("emulator_extra_args", [])]):
+        if item == "-gpu" and index + 1 < len(config.get("emulator_extra_args", [])):
+            gpu = str(config["emulator_extra_args"][index + 1]).lower()
+            required_markers.append(("GPU backend", (f"-gpu {gpu}", f"-gpu={gpu}")))
+
+    for command in candidates:
+        if all(any(marker in command for marker in markers) for _label, markers in required_markers):
+            return ""
+    missing = [
+        label
+        for label, markers in required_markers
+        if not any(any(marker in command for marker in markers) for command in candidates)
+    ]
+    return f"emulator launch mismatch for AVD {expected_avd!r}; missing={missing or 'combined ownership match'}"
+
+
+def target_app_state(config):
+    package_name = str(config.get("app_package") or "com.moyoung.auro.ai")
+    activity_name = str(config.get("app_activity") or ".MainActivity")
+    package = adb_shell(config, ["pm", "path", package_name], timeout=20)
+    activity = adb_shell(
+        config,
+        [
+            "cmd", "package", "resolve-activity", "--brief",
+            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER",
+            package_name,
+        ],
+        timeout=20,
+    )
+    resolved = (activity.stdout or "").strip()
+    full_activity = activity_name if activity_name.startswith(package_name) else f"{package_name}{activity_name}"
+    components = {f"{package_name}/{activity_name}", f"{package_name}/{full_activity}"}
+    activity_found = full_activity in resolved or any(component in resolved for component in components)
+    available = (
+        package.returncode == 0
+        and bool((package.stdout or "").strip())
+        and activity.returncode == 0
+        and activity_found
+    )
+    detail = (
+        f"package_rc={package.returncode}, activity_rc={activity.returncode}, resolved={resolved!r}"
+    )
+    return available, detail
+
+
+def ensure_target_app(config):
+    available, detail = target_app_state(config)
+    if not available:
+        raise RuntimeError(
+            "Auro App 预检失败：干净模拟器镜像里没有配置的 Auro 包或启动页。"
+            f"设备={adb_serial(config)!r}; {detail}。请修复干净镜像后再运行，夜跑不会安装或修改 App。"
+        )
+    print(f"Auro App preflight passed on clean image: {adb_serial(config)}")
 
 
 def device_shell_ready(config, timeout=10):
@@ -320,20 +471,6 @@ def wait_for_device_ready(config, timeout_seconds=None):
     return False
 
 
-def kill_emulator_processes():
-    if os.name != "nt":
-        return
-    for image_name in (
-        "emulator.exe",
-        "qemu-system-x86_64.exe",
-        "qemu-system-i386.exe",
-        "qemu-system-aarch64.exe",
-    ):
-        result = run(["taskkill", "/IM", image_name, "/T", "/F"], timeout=20)
-        if result.returncode == 0:
-            print(f"Stopped stale process tree: {image_name}")
-
-
 def appium_port_from_config(config):
     args = [str(item) for item in config.get("appium_args", [])]
     for index, item in enumerate(args):
@@ -347,30 +484,14 @@ def appium_port_from_config(config):
     try:
         return int(status_url.rstrip("/").rsplit(":", 1)[1].split("/", 1)[0])
     except Exception:
-        return 4723
-
-
-def pids_listening_on_port(port):
-    if os.name != "nt":
-        return []
-
-    result = run(["netstat", "-ano", "-p", "tcp"], timeout=10)
-    pids = set()
-    marker = f":{port}"
-    for line in (result.stdout or "").splitlines():
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        if parts[1].endswith(marker) and parts[3].upper() == "LISTENING" and parts[-1].isdigit():
-            pids.add(parts[-1])
-    return sorted(pids)
+        return 4725
 
 
 def stop_appium(config):
     if not config.get("stop_appium_after_run", True):
         return
 
-    for pid in pids_listening_on_port(appium_port_from_config(config)):
+    for pid in owned_appium_pids_on_port(appium_port_from_config(config)):
         result = run(["taskkill", "/PID", pid, "/T", "/F"], timeout=20)
         if result.returncode == 0:
             print(f"Stopped Appium process tree on port {appium_port_from_config(config)}: pid={pid}")
@@ -381,13 +502,19 @@ def clean_runtime_before_run(config):
         return
 
     print("Cleaning stale Appium/emulator runtime before nightly run.")
-    for pid in pids_listening_on_port(appium_port_from_config(config)):
+    for pid in owned_appium_pids_on_port(appium_port_from_config(config)):
         result = run(["taskkill", "/PID", pid, "/T", "/F"], timeout=20)
         if result.returncode == 0:
             print(f"Stopped stale Appium process tree: pid={pid}")
-    kill_emulator_processes()
+    # Always boot this run from the configured clean AVD snapshot. Only the
+    # configured target serial may be stopped; the shared ADB daemon stays up.
+    udid = adb_serial(config)
+    if udid and udid in adb_devices(config):
+        print(f"Stopping target emulator {udid} to load the clean snapshot.")
+        run([config.get("adb_exe") or "adb", "-s", udid, "emu", "kill"], timeout=20)
+        if not wait_for_target_device_absent(config):
+            raise RuntimeError(f"Configured emulator {udid} did not stop; refusing to reuse a dirty runtime.")
     adb = config.get("adb_exe") or "adb"
-    run([adb, "kill-server"], timeout=15)
     run([adb, "start-server"], timeout=15)
     time.sleep(2)
 
@@ -402,8 +529,15 @@ def stop_emulator(config):
         run([adb, "-s", udid, "emu", "kill"], timeout=20)
         time.sleep(2)
 
-    kill_emulator_processes()
 
+def wait_for_target_device_absent(config, timeout_seconds=30):
+    udid = adb_serial(config)
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if not udid or udid not in adb_devices(config):
+            return True
+        time.sleep(1)
+    return False
 
 def cleanup_runtime_services(config):
     # Leave the report server running so DingTalk links remain reachable.
@@ -430,13 +564,25 @@ def ensure_emulator(config):
     devices = adb_devices(config)
     if (udid and udid in devices) or (not udid and devices):
         if wait_for_device_ready(config, timeout_seconds=60):
-            return
+            mismatch = emulator_runtime_mismatch(config)
+            if not mismatch:
+                return
+            print(
+                f"Configured Android target {udid} is online but unsafe to reuse: {mismatch}. "
+                "Restarting only that configured emulator serial."
+            )
+            stop_emulator({**config, "stop_emulator_after_run": True})
+            if not wait_for_target_device_absent(config):
+                raise RuntimeError(
+                    f"Configured emulator {udid} did not stop; refusing to start a second instance."
+                )
+            devices = []
         if not config.get("start_emulator_if_missing", True):
             return
-        print("Existing Android emulator is listed but not responsive; restarting it.")
-        kill_emulator_processes()
-        run([config.get("adb_exe") or "adb", "kill-server"], timeout=15)
-        run([config.get("adb_exe") or "adb", "start-server"], timeout=15)
+        if udid in devices:
+            print("Existing Android emulator is listed but not responsive; restarting it.")
+            stop_emulator({**config, "stop_emulator_after_run": True})
+            run([config.get("adb_exe") or "adb", "start-server"], timeout=15)
 
     if not config.get("start_emulator_if_missing", True):
         return
@@ -446,7 +592,6 @@ def ensure_emulator(config):
     if not emulator or not avd or not Path(emulator).exists():
         return
 
-    run([config.get("adb_exe") or "adb", "kill-server"], timeout=15)
     run([config.get("adb_exe") or "adb", "start-server"], timeout=15)
 
     command = [emulator, "-avd", avd]
@@ -456,14 +601,15 @@ def ensure_emulator(config):
     if audio_backend:
         command.extend(["-audio", audio_backend])
     command.extend(str(arg) for arg in config.get("emulator_extra_args", []))
+    if "-no-snapshot-save" not in command:
+        command.append("-no-snapshot-save")
 
     start_detached(command)
     if wait_for_device_ready(config):
         return
 
     print("Android emulator did not become ready after first launch; retrying without snapshot.")
-    kill_emulator_processes()
-    run([config.get("adb_exe") or "adb", "kill-server"], timeout=15)
+    stop_emulator({**config, "stop_emulator_after_run": True})
     run([config.get("adb_exe") or "adb", "start-server"], timeout=15)
 
     retry_command = list(command)
@@ -828,8 +974,10 @@ def run_pytest(config):
     env["ANDROID_UDID"] = legacy_udid
     env["ANDROID_ADB_SERIAL"] = str(adb_serial(config) or "")
     env["APPIUM_UDID"] = str(config.get("appium_udid") or legacy_udid)
-    env["APPIUM_SERVER"] = str(config.get("appium_server") or "http://127.0.0.1:4723")
+    env["APPIUM_SERVER"] = str(config.get("appium_server") or "http://127.0.0.1:4725/appium-mvp")
     env["APPIUM_AUTO_RESTART"] = "1" if config.get("appium_auto_restart", True) else "0"
+    env["APP_PACKAGE"] = str(config.get("app_package") or "com.moyoung.auro.ai")
+    env["APP_ACTIVITY"] = str(config.get("app_activity") or ".MainActivity")
     env["AUDIO_INJECTION_MODE"] = str(config.get("audio_injection_mode") or "host")
     env["DEVICE_FARM_DOCKER_COMMAND"] = str(config.get("device_farm_docker_command") or "docker")
     env["DEVICE_FARM_SSH_TARGET"] = str(config.get("device_farm_ssh_target") or "")
@@ -980,8 +1128,9 @@ def run_nightly(args):
         report_base_url = ensure_report_server(config)
     clean_runtime_before_run(config)
     ensure_emulator(config)
-    ensure_appium(config)
     register_runtime_cleanup(config)
+    ensure_target_app(config)
+    ensure_appium(config)
 
     result = run_pytest(config)
     write_run_log(result)

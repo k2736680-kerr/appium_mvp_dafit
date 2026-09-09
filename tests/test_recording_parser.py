@@ -199,10 +199,14 @@ el3.click()
 
     steps, _raw_locators = parse_inspector_python(recording)
 
-    assert [step["action"] for step in steps] == ["click", "tap_point", "click"]
+    assert [step["action"] for step in steps] == [
+        "click",
+        "start_meeting_recording",
+        "click",
+    ]
     assert steps[1]["name"] == "点击会议记录-底部录制按钮"
-    assert steps[1]["x"] == 540
-    assert steps[1]["y"] == 2169
+    assert steps[1]["attempts"] == 3
+    assert steps[1]["state_timeout"] == 10
 
 
 def test_parse_send_keys_as_input_text():
@@ -400,6 +404,21 @@ el5.click()
     assert steps[4]["y"] == 463
 
 
+def test_meeting_record_button_uses_verified_start_action():
+    recording = FakeRecording(
+        '''
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.view.View\\").instance(7)")
+el1.click()
+''',
+        stem="[P0][音频]会议记录",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0]["action"] == "start_meeting_recording"
+    assert steps[0]["state_timeout"] == 10
+
+
 def test_birthday_date_picker_selects_day_without_fixed_month():
     recording = FakeRecording(
         """
@@ -495,8 +514,8 @@ el2.click()
     case_data = recording_to_case(recording)
 
     assert case_data["recording_meta"]["image_translation"] is True
-    assert case_data["recording_meta"]["source_lang"] == "en"
-    assert case_data["recording_meta"]["target_lang"] == "zh"
+    assert case_data["recording_meta"]["source_lang"] == "zh"
+    assert case_data["recording_meta"]["target_lang"] == "en"
     assert case_data["steps"][-1] == {
         "action": "assert_image_translation",
         "name": "校验图片翻译结果",
@@ -504,8 +523,8 @@ el2.click()
         "timeout": 60,
         "poll_interval": 6,
         "check_blockers": False,
-        "source_lang": "en",
-        "target_lang": "zh",
+        "source_lang": "zh",
+        "target_lang": "en",
     }
 
 
@@ -525,9 +544,29 @@ el2.click()
     assert steps[1] == {
         "action": "tap_first_album_photo",
         "name": "选择 Google 相册最新测试图片",
-        "description_contains": ["照片拍摄于", "Photo taken"],
+        "description_contains": ["拍摄于", "照片拍摄于", "Photo taken"],
         "timeout": 15,
         "wait_after": 1,
+    }
+
+
+def test_parse_image_translation_gallery_button_uses_stable_point():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\\"android.view.View\\\").instance(7)")
+el1.click()
+""",
+        stem="[P0]图片翻译_英文拍照_相册",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert steps[0] == {
+        "action": "tap_point",
+        "name": "点击图片翻译-图库按钮",
+        "x": 886,
+        "y": 2253,
+        "wait_after": 2,
     }
 
 
@@ -548,8 +587,8 @@ el2.click()
         "action": "tap_text_center",
         "name": "点击 Google 相册完成",
         "texts": ["完成", "Done"],
-        "fallback_tap": {"x": 913, "y": 2202},
-        "timeout": 15,
+        "optional": True,
+        "timeout": 3,
         "wait_after": 2,
     }
 
@@ -620,6 +659,32 @@ def test_assert_image_translation_uses_visual_validator(monkeypatch):
         "source_lang": "en",
         "target_lang": "zh",
     }]
+
+
+def test_assert_image_translation_without_model_accepts_rendered_result(monkeypatch):
+    page_source = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy index="0" class="hierarchy">
+  <android.view.View index="0" content-desc="图片翻译" />
+  <node index="1" class="android.widget.ImageView" bounds="[0,346][1080,2106]" />
+</hierarchy>
+"""
+    with TemporaryDirectory() as artifacts_root:
+        monkeypatch.setenv("APPIUM_ARTIFACTS_ROOT", artifacts_root)
+        runner = CaseRunner(FakeDriver(page_source), {"case_id": "unit_image_no_model"})
+
+        class NoModelValidator:
+            api_key = ""
+
+            def validate_image_translation(self, **_kwargs):
+                raise AssertionError("rendered-result fallback should avoid model call")
+
+        runner.image_translation = NoModelValidator()
+        runner.context["album_result_baseline_screenshot"] = "x" * 100
+        runner.action_assert_image_translation({
+            "source_lang": "zh",
+            "target_lang": "en",
+            "wait_before": 0,
+        })
 
 
 def test_assert_image_translation_retries_until_result_loaded(monkeypatch):

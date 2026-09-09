@@ -28,7 +28,7 @@ appium_mvp/
 常用环境变量：
 
 ```text
-APPIUM_SERVER=http://127.0.0.1:4723
+APPIUM_SERVER=http://127.0.0.1:4725/appium-mvp
 ANDROID_UDID=emulator-5554
 ANDROID_ADB=D:\AutoTestTools\Tools\AndroidSdk\platform-tools\adb.exe
 ANDROID_EMULATOR=D:\AutoTestTools\Tools\AndroidSdk\emulator\emulator.exe
@@ -42,6 +42,23 @@ AURO_LOGIN_PASSWORD=<测试密码>
 
 夜跑的本机配置放在 `scripts/nightly_config.local.json`，它已经在 `.gitignore` 里，不提交远端。这里保存钉钉 webhook、七牛上传密钥、本机报告地址、模拟器启动参数和自动登录账号。
 
+夜跑复用在线模拟器前会核对 AVD 名称、`-allow-host-audio`、音频后端和 GPU
+启动参数；不匹配时只重启 `ANDROID_ADB_SERIAL` 指定的模拟器。正式执行前还会
+检查 Auro 包及 Launcher Activity。夜跑不会安装或修改 App；如果检查失败，说明干净模拟器镜像不完整，应先修复镜像：
+
+```json
+{
+  "clean_runtime_before_run": true
+}
+```
+
+权限、登录状态和测试数据都应预先保存在干净镜像中，夜跑只加载镜像，不会临时安装或改动 App。
+
+默认启动参数不会再加入 `-no-snapshot-load`，因此 Pixel_8a 会加载已验证的
+`default_boot` 快照；只有正常快照启动超时后的恢复重试才会转为冷启动。夜跑启动
+模拟器时会强制加入 `-no-snapshot-save`，避免用例执行后的 App 数据、系统页面或
+异常状态在退出时反向覆盖干净的 `default_boot` 基准快照。
+
 ## 手工运行
 
 建议在 CMD 里运行：
@@ -54,8 +71,13 @@ call .venv\Scripts\activate.bat
 启动 Appium Server：
 
 ```cmd
-appium --address 0.0.0.0 --port 4723
+appium --address 0.0.0.0 --port 4725 --base-path /appium-mvp
 ```
+
+本项目固定使用 4725 和专属 `/appium-mvp` Base Path，避免复用其他 Android 自动化项目常用的 4723；清理和恢复时只有同时匹配专属端口与 Base Path 的 Appium 进程才允许被终止。
+宿主机 ADB daemon 由全部真机和模拟器共享；运行与恢复脚本只允许操作
+`ANDROID_ADB_SERIAL` 指定的模拟器，禁止执行全局 `adb kill-server` 或按
+进程镜像名终止全部 Emulator。
 
 检查设备：
 

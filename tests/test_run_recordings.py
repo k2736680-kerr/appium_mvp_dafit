@@ -285,12 +285,26 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     if (
         "相册" in title
         and by == "android_uiautomator"
+        and 'className("android.view.View").instance(7)' in value
+        and "图片翻译" in title
+    ):
+        return {
+            "action": "tap_point",
+            "name": "点击图片翻译-图库按钮",
+            "x": 886,
+            "y": 2253,
+            "wait_after": 2,
+        }
+
+    if (
+        "相册" in title
+        and by == "android_uiautomator"
         and 'className("android.view.View").instance(24)' in value
     ):
         return {
             "action": "tap_first_album_photo",
             "name": "选择 Google 相册最新测试图片",
-            "description_contains": ["照片拍摄于", "Photo taken"],
+            "description_contains": ["拍摄于", "照片拍摄于", "Photo taken"],
             "timeout": 15,
             "wait_after": 1,
         }
@@ -304,8 +318,8 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
             "action": "tap_text_center",
             "name": "点击 Google 相册完成",
             "texts": ["完成", "Done"],
-            "fallback_tap": {"x": 913, "y": 2202},
-            "timeout": 15,
+            "optional": True,
+            "timeout": 3,
             "wait_after": 2,
         }
 
@@ -317,11 +331,11 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
         or 'className("android.view.View").instance(11)' in value
     ):
         return {
-            "action": "tap_point",
+            "action": "start_meeting_recording",
             "name": "点击会议记录-底部录制按钮",
-            "x": 540,
-            "y": 2169,
-            "wait_after": 1
+            "attempts": 3,
+            "state_timeout": 10,
+            "wait_after": 1,
         }
 
     # 会议记录名称是按生成时间变化的，不要依赖录制时的固定标题。
@@ -702,6 +716,42 @@ def parse_inspector_python(py_file: Path):
     return steps, raw_locators_in_click_order
 
 
+def normalize_case_steps(title: str, steps: list[dict]) -> list[dict]:
+    """Replace version-fragile recorded navigation with stable intent actions."""
+    if "会议记录_修改名称" not in title:
+        return steps
+
+    input_steps = [step for step in steps if step.get("action") == "input_text"]
+    confirm_steps = [
+        step
+        for step in steps
+        if (step.get("locator") or {}).get("by") == "accessibility_id"
+        and (step.get("locator") or {}).get("value") == "确定"
+    ]
+    if not steps or not input_steps or not confirm_steps:
+        return steps
+
+    return [
+        steps[0],
+        {
+            "action": "open_first_meeting_record",
+            "name": "打开第一条会议记录",
+            "attempts": 3,
+            "state_timeout": 8,
+            "wait_after": 1,
+        },
+        {
+            "action": "open_meeting_rename",
+            "name": "打开会议记录名称编辑框",
+            "attempts": 3,
+            "state_timeout": 5,
+            "wait_after": 0.5,
+        },
+        input_steps[-1],
+        confirm_steps[-1],
+    ]
+
+
 def recording_starts_from_launcher(raw_locators):
     """
     判断录制文件是不是从桌面点击 Auro AI 开始。
@@ -725,6 +775,7 @@ def recording_to_case(py_file: Path):
     case_id = safe_case_id(title)
 
     steps, raw_locators = parse_inspector_python(py_file)
+    steps = normalize_case_steps(title, steps)
 
     if not steps:
         raise AssertionError(f"没有从录制文件中解析到任何 click 步骤：{py_file}")
@@ -916,6 +967,16 @@ def is_translation_timeout_error(exc) -> bool:
     return "等待翻译结果超时" in message and "last_source=None" in message
 
 
+def is_retryable_network_error(exc) -> bool:
+    if not isinstance(exc, AssertionError):
+        return False
+    message = str(exc)
+    return any(
+        marker in message
+        for marker in ("请稍后重试", "网络连接失败", "网络异常", "请求失败")
+    )
+
+
 RECORDING_FILES = load_recording_files()
 
 
@@ -959,6 +1020,8 @@ def test_run_recording(recording_file):
                 # 主机音频到虚拟麦克风的桥接还没建立，第一次打开麦克风
                 # 采集不到声音。重跑一次等桥接建立后即可正常。
                 print(f"[RECOVERY] 翻译结果超时（疑似音频桥接冷启动），重试一次: {exc}")
+            elif is_retryable_network_error(exc):
+                print(f"[RECOVERY] 网络瞬态错误，重启 App 后重试整条用例一次: {exc}")
             else:
                 raise
         finally:

@@ -139,6 +139,7 @@ def test_run_nightly_falls_back_to_local_report_when_qiniu_upload_fails(tmp_path
     monkeypatch.setattr(nr, "load_config", lambda: config)
     monkeypatch.setattr(nr, "clean_runtime_before_run", lambda config: None)
     monkeypatch.setattr(nr, "ensure_emulator", lambda config: None)
+    monkeypatch.setattr(nr, "ensure_target_app", lambda config: None)
     monkeypatch.setattr(nr, "ensure_appium", lambda config: None)
     monkeypatch.setattr(nr, "register_runtime_cleanup", lambda config: None)
     monkeypatch.setattr(nr, "run_pytest", lambda config: FakeResult())
