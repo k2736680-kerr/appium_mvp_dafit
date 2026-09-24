@@ -262,6 +262,16 @@ def test_input_text_hides_keyboard_by_default(monkeypatch, tmp_path):
     assert driver.hide_keyboard_calls == 1
 
 
+def test_unknown_keyboard_state_does_not_press_back(monkeypatch, tmp_path):
+    driver = FakeFormDriver()
+    driver.is_keyboard_shown = lambda: None
+    runner = make_runner(monkeypatch, tmp_path, driver)
+
+    assert runner.hide_keyboard_if_present() is False
+    assert driver.hide_keyboard_calls == 0
+    assert driver.keycodes == []
+
+
 def test_click_retries_after_hiding_keyboard(monkeypatch, tmp_path):
     driver = FakeFormDriver()
     driver.keyboard_visible = True

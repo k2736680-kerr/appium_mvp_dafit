@@ -1,5 +1,6 @@
 import ast
 import os
+import json
 import re
 import subprocess
 import time
@@ -206,6 +207,26 @@ def convert_known_locator_to_point(locator: dict, index: int, title: str = ""):
     """
     by = locator.get("by")
     value = locator.get("value", "")
+
+    # Compose AI 页面当前没有给发送按钮稳定的 resource-id/content-desc，
+    # 录制器导出的 Button.instance(1) 会随着键盘和页面状态漂移。执行层
+    # 改为按“右下角、可点击、已启用”的发送按钮语义查找。
+    if "AI助手_输入框" in title and by == "android_uiautomator" and 'className("android.widget.Button").instance(1)' in value:
+        return {
+            "action": "tap_ai_send",
+            "name": "点击 AI 助手发送按钮",
+            "timeout": 5,
+            "wait_after": 1,
+        }
+
+    # 历史搜索按钮在不同构建中可能是 Button 或 Compose View，统一使用
+    # 页面右上角搜索入口的相对位置，不依赖 View/Button 的全局 instance。
+    if "历史_搜索" in title and by == "class_name" and value == "android.widget.Button":
+        return {
+            "action": "tap_history_search",
+            "name": "点击历史搜索按钮",
+            "wait_after": 1,
+        }
 
     if "登出和登录" in title and (
         by == "android_uiautomator"
@@ -700,9 +721,52 @@ def parse_inspector_python(py_file: Path):
     events.extend(parse_swipe_events(text))
     events.sort(key=lambda item: item["position"])
     steps = [item["step"] for item in events]
+
+    # 登录页的账号/密码输入框都被录制成 EditText.instance(n)。
+    # instance 会因键盘和渲染顺序变化而失效；执行时按页面中输入框的
+    # 纵向位置解析 account/password。输入动作自身会 click，因此移除
+    # 紧邻的冗余 EditText.click 步骤，避免先在错误状态上定位一次。
+    if "登出和登录" in title:
+        normalized = []
+        for index, step in enumerate(steps):
+            locator = step.get("locator") or {}
+            value = locator.get("value", "")
+            is_edit_instance = (
+                locator.get("by") == "android_uiautomator"
+                and 'className("android.widget.EditText").instance(' in value
+            )
+            if is_edit_instance and step.get("action") == "click":
+                next_step = steps[index + 1] if index + 1 < len(steps) else None
+                if next_step and next_step.get("action") == "input_text":
+                    continue
+            normalized.append(step)
+        steps = normalized
+
+        for step in steps:
+            if step.get("action") != "input_text":
+                continue
+            value = (step.get("locator") or {}).get("value", "")
+            if 'EditText").instance(0)' in value:
+                step["field_role"] = "account"
+                step["locator"] = {"by": "class_name", "value": "android.widget.EditText"}
+            elif 'EditText").instance(1)' in value:
+                step["field_role"] = "password"
+                step["locator"] = {"by": "class_name", "value": "android.widget.EditText"}
+
     for index, step in enumerate(steps[:-1]):
         next_step = steps[index + 1]
         if step.get("action") != "input_text":
+            continue
+        # On the login form the password field is revealed/kept in the same
+        # input session while the IME is open.  Hiding the keyboard after the
+        # account field can make the current Compose screen navigate back to
+        # the account page before the password step runs.
+        if (
+            "登出和登录" in title
+            and step.get("field_role") == "account"
+            and next_step.get("action") == "input_text"
+        ):
+            step["hide_keyboard_after"] = False
             continue
         if next_step.get("action") != "click":
             continue
@@ -857,15 +921,70 @@ def save_prelude_debug(driver, name):
         driver.save_screenshot(str(artifact_dir / f"{name}.png"))
     except Exception:
         pass
-
     try:
         (artifact_dir / f"{name}.xml").write_text(
             driver.page_source,
-            encoding="utf-8"
+            encoding="utf-8",
         )
     except Exception:
         pass
 
+
+def driver_current_package(driver):
+    try:
+        value = getattr(driver, "current_package", None)
+        if callable(value):
+            value = value()
+        return str(value) if value else ""
+    except Exception:
+        return ""
+
+
+def wait_for_package(driver, package_name, timeout=15):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if driver_current_package(driver) == package_name:
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def save_failure_debug(driver, case_id, error):
+    """Save enough state to distinguish locator failures from foreground loss."""
+    if driver is None:
+        return
+    artifact_root = os.environ.get("APPIUM_ARTIFACTS_ROOT")
+    base_dir = Path(artifact_root) if artifact_root else PROJECT_ROOT / "artifacts"
+    case_dir = base_dir / safe_case_id(case_id)
+    case_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        driver.save_screenshot(str(case_dir / "failure_context.png"))
+    except Exception:
+        pass
+    try:
+        (case_dir / "failure_context.xml").write_text(driver.page_source, encoding="utf-8")
+    except Exception:
+        pass
+    try:
+        activity = getattr(driver, "current_activity", "")
+        if callable(activity):
+            activity = activity()
+    except Exception:
+        activity = ""
+    metadata = {
+        "case_id": case_id,
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "current_package": driver_current_package(driver),
+        "current_activity": activity or "",
+    }
+    try:
+        (case_dir / "failure_context.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
 
 def restart_app_once_for_run(driver, start_mode="app"):
     """
@@ -910,10 +1029,17 @@ def ensure_app_home(driver, timeout=20, max_back=6):
     def wait_home(label, wait_seconds):
         end_time = time.time() + wait_seconds
         while time.time() < end_time:
-            source = driver.page_source
-            if HOME_MARKER in source:
-                save_prelude_debug(driver, label)
-                return True
+            try:
+                package = driver_current_package(driver)
+                if package and package != APP_PACKAGE:
+                    time.sleep(0.5)
+                    continue
+                source = driver.page_source
+                if HOME_MARKER in source:
+                    save_prelude_debug(driver, label)
+                    return True
+            except Exception:
+                pass
             time.sleep(1)
         return False
 
@@ -924,11 +1050,14 @@ def ensure_app_home(driver, timeout=20, max_back=6):
     if wait_home("02_home_found", timeout):
         return
 
-    for i in range(max_back):
-        driver.press_keycode(4)  # BACK
-        time.sleep(1)
-        if wait_home(f"03_home_found_after_back_{i + 1}", 1):
-            return
+    # 只有确认当前仍在目标 App 内才发送 BACK。未知前台页面上发送 BACK
+    # 可能直接把应用退到 Launcher，进一步污染后续用例。
+    if not driver_current_package(driver) or driver_current_package(driver) == APP_PACKAGE:
+        for i in range(max_back):
+            driver.press_keycode(4)
+            time.sleep(1)
+            if wait_home(f"03_home_found_after_back_{i + 1}", 1):
+                return
 
     save_prelude_debug(driver, "98_home_not_found_after_back")
 
@@ -944,7 +1073,7 @@ def ensure_app_home(driver, timeout=20, max_back=6):
     time.sleep(2)
     save_prelude_debug(driver, "99_after_recovery_restart")
 
-    if wait_home("100_home_found_after_recovery_restart", timeout):
+    if wait_for_package(driver, APP_PACKAGE, timeout=10) and wait_home("100_home_found_after_recovery_restart", timeout):
         return
 
     save_prelude_debug(driver, "101_home_not_found_after_recovery_restart")
@@ -952,6 +1081,28 @@ def ensure_app_home(driver, timeout=20, max_back=6):
         "录制用例执行前置失败：已经启动 App，但没有找到首页文本“翻译中心”。"
         "已尝试返回键和重启 App 兜底，请检查 App 是否被系统弹窗、分享页或外部页面挡住。"
     )
+
+
+def prepare_case_start(driver, start_mode="app"):
+    """Reset only the target App between cases without clearing user data."""
+    try:
+        driver.terminate_app(APP_PACKAGE)
+    except Exception as exc:
+        print(f"[PRELUDE] terminate_app ignored: {exc}")
+    time.sleep(0.8)
+
+    if start_mode == "launcher":
+        driver.press_keycode(3)
+        time.sleep(0.8)
+        return
+
+    driver.activate_app(APP_PACKAGE)
+    time.sleep(1.5)
+    if not wait_for_package(driver, APP_PACKAGE, timeout=15):
+        raise AssertionError(
+            f"启动用例前目标 App 未进入前台，实际 package={driver_current_package(driver)!r}"
+        )
+    ensure_app_home(driver)
 
 
 def is_translation_timeout_error(exc) -> bool:
@@ -977,6 +1128,13 @@ def is_retryable_network_error(exc) -> bool:
     )
 
 
+def is_foreground_lost_error(exc) -> bool:
+    return isinstance(exc, AssertionError) and any(
+        marker in str(exc)
+        for marker in ("前台应用已离开目标 App", "目标 App 未进入前台")
+    )
+
+
 RECORDING_FILES = load_recording_files()
 
 
@@ -997,10 +1155,7 @@ def test_run_recording(recording_file):
         driver = None
         try:
             driver = create_driver(start_mode=start_mode, no_reset=no_reset)
-            restart_app_once_for_run(driver, start_mode=start_mode)
-
-            if start.get("ensure_app_home", False):
-                ensure_app_home(driver)
+            prepare_case_start(driver, start_mode=start_mode)
 
             if case_data.get("recording_meta", {}).get("image_translation"):
                 sync_image_translation_source()
@@ -1010,6 +1165,7 @@ def test_run_recording(recording_file):
             return
         except Exception as exc:
             last_error = exc
+            save_failure_debug(driver, case_data.get("case_id", recording_file.stem), exc)
             if attempt >= 2:
                 raise
             if is_transient_session_error(exc):
@@ -1022,6 +1178,8 @@ def test_run_recording(recording_file):
                 print(f"[RECOVERY] 翻译结果超时（疑似音频桥接冷启动），重试一次: {exc}")
             elif is_retryable_network_error(exc):
                 print(f"[RECOVERY] 网络瞬态错误，重启 App 后重试整条用例一次: {exc}")
+            elif is_foreground_lost_error(exc):
+                print(f"[RECOVERY] 前台 App 状态丢失，重新准备当前用例后重试一次: {exc}")
             else:
                 raise
         finally:

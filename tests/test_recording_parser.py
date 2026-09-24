@@ -225,10 +225,48 @@ el3.click()
 
     steps, _raw_locators = parse_inspector_python(recording)
 
-    assert [step["action"] for step in steps] == ["click", "click", "input_text", "click"]
+    assert [step["action"] for step in steps] == [
+        "click",
+        "click",
+        "input_text",
+        "tap_ai_send",
+    ]
     assert steps[2]["name"] == "输入文本：你好，今天天气怎么样"
     assert steps[2]["locator"] == {"by": "class_name", "value": "android.widget.EditText"}
     assert steps[2]["text"] == "你好，今天天气怎么样"
+
+
+def test_login_recording_normalizes_edit_text_roles():
+    recording = FakeRecording(
+        """
+el1 = driver.find_element(by=AppiumBy.ACCESSIBILITY_ID, value="点击登录")
+el1.click()
+el2 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.widget.EditText\\").instance(0)")
+el2.click()
+el2.send_keys("account@example.com")
+el3 = driver.find_element(by=AppiumBy.ANDROID_UIAUTOMATOR, value="new UiSelector().className(\\"android.widget.EditText\\").instance(1)")
+el3.click()
+el3.send_keys("password")
+""",
+        stem="登出和登录",
+    )
+
+    steps, _raw_locators = parse_inspector_python(recording)
+
+    assert [step["action"] for step in steps] == [
+        "click",
+        "input_text",
+        "input_text",
+    ]
+    assert [step["field_role"] for step in steps[1:]] == ["account", "password"]
+    assert all(
+        step["locator"] == {
+            "by": "class_name",
+            "value": "android.widget.EditText",
+        }
+        for step in steps[1:]
+    )
+    assert steps[1]["hide_keyboard_after"] is False
 
 
 def test_parse_profile_fields_ignore_recorded_values():

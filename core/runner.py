@@ -145,6 +145,10 @@ class CaseRunner:
 
         if action == "click":
             self.action_click(step)
+        elif action == "tap_ai_send":
+            self.action_tap_ai_send(step)
+        elif action == "tap_history_search":
+            self.action_tap_history_search(step)
         elif action == "input_text":
             self.action_input_text(step)
         elif action == "tap_role":
@@ -445,7 +449,7 @@ class CaseRunner:
 
         timeout = step.get("timeout", DEFAULT_TIMEOUT)
         try:
-            el = self.wait_for_element(locator, timeout=timeout)
+            el = self.resolve_input_element(step, timeout=timeout)
         except TimeoutException:
             raise AssertionError(f"找不到输入框元素: {locator}")
 
@@ -453,8 +457,92 @@ class CaseRunner:
         if step.get("clear", False):
             el.clear()
         el.send_keys(text)
+        # 输入后立刻确认仍在目标 App。若输入法或 App 崩溃把前台切到
+        # Launcher，继续执行后续录制步骤只会产生误导性的定位失败。
+        current_package = self.current_package()
+        if current_package and current_package != APP_PACKAGE:
+            raise AssertionError(
+                f"输入文本后前台应用已离开目标 App: {current_package}"
+            )
         if step.get("hide_keyboard_after", True):
             self.hide_keyboard_if_present()
+        time.sleep(step.get("wait_after", 1))
+
+    def current_package(self):
+        try:
+            value = getattr(self.driver, "current_package", None)
+            if callable(value):
+                value = value()
+            return str(value) if value else ""
+        except Exception:
+            return ""
+
+    def resolve_input_element(self, step, timeout=None):
+        field_role = step.get("field_role")
+        if not field_role:
+            return self.wait_for_element(step["locator"], timeout=timeout)
+
+        locator = {"by": "class_name", "value": "android.widget.EditText"}
+        end_time = time.time() + (timeout or DEFAULT_TIMEOUT)
+        while time.time() < end_time:
+            by, value = to_appium_locator(locator)
+            try:
+                elements = [el for el in self.driver.find_elements(by, value)
+                            if el.is_displayed() and el.is_enabled()]
+            except Exception:
+                elements = []
+            if elements:
+                elements.sort(key=lambda el: (el.rect.get("y", 0), el.rect.get("x", 0)))
+                if field_role == "password":
+                    return elements[-1]
+                if field_role == "account":
+                    return elements[0]
+            time.sleep(0.2)
+        raise TimeoutException(f"input field role not found: {field_role}")
+
+    def action_tap_ai_send(self, step):
+        timeout = float(step.get("timeout", 5))
+        end_time = time.time() + timeout
+        width, height = 1080, 2400
+        try:
+            size = self.driver.get_window_size()
+            width, height = int(size["width"]), int(size["height"])
+        except Exception:
+            pass
+        while time.time() < end_time:
+            try:
+                by, value = to_appium_locator({"by": "class_name", "value": "android.widget.Button"})
+                candidates = [el for el in self.driver.find_elements(by, value)
+                              if el.is_displayed() and el.is_enabled()]
+                candidates = [el for el in candidates if el.rect.get("x", 0) > width * 0.7
+                              and el.rect.get("y", 0) > height * 0.65]
+                if candidates:
+                    el = max(candidates, key=lambda item: (item.rect.get("y", 0), item.rect.get("x", 0)))
+                    self.click_element_center(el)
+                    time.sleep(step.get("wait_after", 1))
+                    return
+            except Exception:
+                pass
+            time.sleep(0.2)
+        # Last-resort geometry fallback for the Compose send button, whose
+        # accessibility node has no label/resource-id in the current build.
+        self.driver.execute_script(
+            "mobile: clickGesture",
+            {"x": int(width * 0.912), "y": int(height * 0.835)},
+        )
+        time.sleep(step.get("wait_after", 1))
+
+    def action_tap_history_search(self, step):
+        width, height = 1080, 2400
+        try:
+            size = self.driver.get_window_size()
+            width, height = int(size["width"]), int(size["height"])
+        except Exception:
+            pass
+        self.driver.execute_script(
+            "mobile: clickGesture",
+            {"x": int(width * 0.912), "y": int(height * 0.105)},
+        )
         time.sleep(step.get("wait_after", 1))
 
     def click_element_center(self, el):
@@ -474,7 +562,10 @@ class CaseRunner:
 
     def hide_keyboard_if_present(self):
         shown_before = self.is_keyboard_shown()
-        if shown_before is False:
+        # None means the driver cannot reliably determine keyboard state.
+        # Never use BACK in that case: on Android it may leave the App or
+        # navigate all the way to the Launcher.
+        if shown_before is not True:
             return False
 
         attempted = False
