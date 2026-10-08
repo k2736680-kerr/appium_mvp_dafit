@@ -1049,6 +1049,97 @@ def summarize_cascade_risk(result):
     return hits, sample
 
 
+# 夜跑是在睡眠唤醒后无人值守执行：此时没有可用的交互式桌面会话，
+# 模拟器的 DirectSound 后端初始化失败（stderr 打印
+# "dsound: Could not set cooperative level for window 0000000000000000"），
+# 宿主音频回环（Windows 播放设备 -> CABLE Input -> 模拟器 host mic）随之
+# 送不出声音，App 收不到语音就一直停在「未连接」，5 条 P0 翻译用例
+# [翻译]单向模式_*、[翻译]手机模式_点击录音_* 必挂且重试无用。
+#
+# README「音频方案」写明这是主机虚拟声卡方案，依赖
+# "-allow-host-audio -audio dsound" 且 Windows 播放设备路由到 VB-CABLE。
+# 同一台机器白天人工跑能全绿、夜里固定挂这 5 条，差别就是交互式会话。
+EMULATOR_AUDIO_FAILURE_SIGNATURES = (
+    "Could not set cooperative level",
+    "dsound:",
+)
+NO_INTERACTIVE_SESSION_WINDOW = "window 0000000000000000"
+
+
+def emulator_audio_health(config):
+    """Report whether the emulator host-audio bridge came up on this launch.
+
+    Reads the stderr that start_detached() already appends for the emulator,
+    so this adds no new capture mechanism.  Returns (ok, detail).
+    """
+    if str(config.get("audio_injection_mode") or "host").strip().lower() != "host":
+        return True, "音频注入非 host 模式，跳过主机声卡检查。"
+
+    audio_backend = str(config.get("emulator_audio_backend") or "").strip().lower()
+    if audio_backend != "dsound":
+        return True, f"音频后端为 {audio_backend or '<空>'}，跳过 DirectSound 检查。"
+
+    log_path = REPORT_ROOT / "emulator_stderr.log"
+    if not log_path.exists():
+        return True, "未找到 emulator_stderr.log，无法判断音频桥接状态。"
+
+    recent = log_path.read_text(encoding="utf-8", errors="replace")[-20000:]
+    hits = [sig for sig in EMULATOR_AUDIO_FAILURE_SIGNATURES if sig in recent]
+    if not hits:
+        return True, "模拟器 stderr 未出现 DirectSound 初始化失败。"
+
+    window_missing = NO_INTERACTIVE_SESSION_WINDOW in recent
+    detail = (
+        "模拟器 DirectSound 后端初始化失败"
+        f"（命中 {', '.join(hits)}）"
+        + (
+            "；窗口句柄为 0，说明当前没有可用的交互式桌面会话"
+            if window_missing
+            else ""
+        )
+    )
+    return False, detail
+
+
+def emulator_host_mic_reachable(config):
+    """Probe the documented host-mic bridge path, mirroring core/audio.py.
+
+    Uses the same `adb emu avd hostmicoff/hostmicon` toggle the runner relies
+    on, so a failure here means the bridge path itself is unavailable.
+    """
+    udid = str(adb_serial(config) or "")
+    if not udid.startswith("emulator-"):
+        return True, "目标不是模拟器，跳过 host mic 桥接探测。"
+
+    for command in ("hostmicoff", "hostmicon"):
+        result = adb_target(config, ["emu", "avd", command], timeout=15)
+        if result.returncode != 0:
+            message = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+            return False, f"模拟器控制台拒绝 {command}: {message}"
+    return True, "host mic 桥接命令可用。"
+
+
+def check_audio_preconditions(config):
+    """Fail loud before the nightly burns ~50 minutes on doomed audio cases."""
+    ok, detail = emulator_audio_health(config)
+    if not ok:
+        print(f"[AUDIO-PRECHECK] 主机音频回环不可用: {detail}")
+        print(
+            "[AUDIO-PRECHECK] 夜跑很可能在唤醒后无交互式会话的情况下执行；"
+            "依赖音频注入的 [翻译]用例预期会失败（表现为一直停在「未连接」）。"
+            "请确认唤醒后存在可用桌面会话，且 Windows 播放设备已路由到 VB-CABLE。"
+        )
+        return False
+
+    mic_ok, mic_detail = emulator_host_mic_reachable(config)
+    if not mic_ok:
+        print(f"[AUDIO-PRECHECK] host mic 桥接探测失败: {mic_detail}")
+        return False
+
+    print(f"[AUDIO-PRECHECK] 音频前置检查通过: {detail} {mic_detail}")
+    return True
+
+
 def write_fatal_log(exc):
     log_dir = PROJECT_ROOT / "reports" / "nightly_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -1154,8 +1245,16 @@ def run_nightly(args):
     ensure_target_app(config)
     ensure_appium(config)
 
+    audio_ready = check_audio_preconditions(config)
+
     result = run_pytest(config)
     log_path = write_run_log(result)
+
+    if not audio_ready:
+        print(
+            "[AUDIO-PRECHECK] 本次夜跑在音频前置检查失败的情况下执行，"
+            "依赖音频注入的 [翻译] 用例失败属于环境噪声，不要当作产品回归。"
+        )
 
     cascade_hits, cascade_sample = summarize_cascade_risk(result)
     if cascade_hits:

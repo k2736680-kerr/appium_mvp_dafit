@@ -180,6 +180,23 @@ AppiumMvpNightlyRun：每天 23:30 运行全部 recordings 用例并按时间窗
 - 如果未配置七牛上传，报告链接由 `scripts/report_server.py` 常驻提供
 - 跑完后保留报告服务，清理 Appium 和模拟器
 
+夜跑由 Windows 任务计划程序用 `-WakeToRun` 从睡眠唤醒后无人值守执行。
+这种情况下没有可用的交互式桌面会话，模拟器的 DirectSound 后端会初始化失败
+（`emulator_stderr.log` 打印
+`dsound: Could not set cooperative level for window 0000000000000000`），
+宿主音频回环送不出声音，App 收不到语音就一直停在「未连接」，导致
+`[P0][翻译]单向模式_*`、`[P0][翻译]手机模式_点击录音_*` 固定失败且重试无效。
+
+因此夜跑在跑 pytest 前会先做音频前置检查（`[AUDIO-PRECHECK]`）：
+
+- 检查 `emulator_stderr.log` 是否出现 DirectSound 初始化失败
+- 用 `adb emu avd hostmicoff/hostmicon` 探测 host mic 桥接是否可用
+- 检查失败时大声报警，并在夜跑日志里标注该批 `[翻译]` 失败属于环境噪声，
+  不要当作产品回归；同机白天人工跑可全绿，差别就在交互式会话
+
+排障：确认唤醒后存在可用桌面会话，且 Windows 播放设备已路由到 VB-CABLE
+（`CABLE Input` 出现在播放设备里，`CABLE Output` 出现在录音设备里）。
+
 七牛报告上传配置示例：
 
 ```json
