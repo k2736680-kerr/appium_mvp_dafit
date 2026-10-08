@@ -8,11 +8,13 @@ import hmac
 import html
 import json
 import locale
+import math
 import mimetypes
 import os
 import re
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -282,6 +284,30 @@ def adb_devices(config):
 
 def adb_serial(config):
     return config.get("android_adb_serial") or config.get("android_udid")
+
+
+def adb_exe(config):
+    return config.get("adb_exe") or "adb"
+
+
+def play_audio_on_host(config):
+    """Reuse core.audio 的宿主机播放路径，保持与用例一致（不另造一套）。"""
+    try:
+        from core.audio import AudioInjector
+
+        # 与 core/runner.py:108 的构造方式保持一致（mode 由环境/配置自身决定）。
+        AudioInjector(PROJECT_ROOT).play_on_host(resolve_audio_file(config))
+    except Exception as exc:  # pragma: no cover - 环境相关
+        print(f"[AUDIO-PRECHECK] 宿主播放失败: {exc}")
+
+
+def resolve_audio_file(config):
+    """挑一个存在的测试音频；回环探测只需要"有声音"。"""
+    for name in ("source_zh.wav", "source_en.wav"):
+        candidate = PROJECT_ROOT / "assets" / "audio" / name
+        if candidate.exists():
+            return candidate
+    return PROJECT_ROOT / "assets" / "audio" / "source_en.wav"
 
 
 def adb_shell(config, args, timeout=10):
@@ -1155,6 +1181,99 @@ def emulator_host_mic_reachable(config):
     return True, "host mic 桥接命令可用。"
 
 
+def emulator_loopback_level(config, seconds=3.0):
+    """Measure whether host audio actually reaches the emulator microphone.
+
+    This is the check that matters for the 2026-10-08 failures: the emulator
+    reported `已连接`, the audio file played, and yet the page stayed empty --
+    i.e. the loopback was open but delivered **silence**. Neither the
+    emulator_stderr scan nor the hostmic toggle can see that.
+
+    Returns (ok, detail).
+    """
+    udid = str(adb_serial(config) or "")
+    if not udid.startswith("emulator-"):
+        return True, "目标不是模拟器，跳过回环电平探测。"
+
+    # 只有 host 注入模式才依赖这台机器的回环。
+    if str(config.get("audio_injection_mode") or "host").strip().lower() != "host":
+        return True, "音频注入非 host 模式，跳过回环电平探测。"
+
+    # tinycap 必须 root：否则 PCM 设备 Permission denied，只写出 44 字节空 WAV，
+    # 很容易被误当成"静音"。这里明确区分"没测成"和"测到静音"。
+    root = adb_target(config, ["root"], timeout=30)
+    if root.returncode != 0:
+        return True, "无法取得 root，跳过回环电平探测（不作为失败）。"
+    time.sleep(3)
+
+    remote = "/sdcard/_nightly_loopback.wav"
+    adb_target(config, ["shell", "rm", "-f", remote], timeout=15)
+
+    def capture(with_playback):
+        subprocess.Popen(
+            [adb_exe(config), "-s", udid, "shell", "tinycap", remote,
+             "-D", "0", "-d", "0", "-c", "1", "-r", "16000", "-b", "16"],
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(1.5)
+        if with_playback:
+            play_audio_on_host(config)
+            time.sleep(1.0)
+        else:
+            time.sleep(seconds)
+        # tinycap 不支持 -t，用终止进程控制时长。
+        subprocess.run(
+            [adb_exe(config), "-s", udid, "shell", "pkill", "-f", "tinycap"],
+            cwd=PROJECT_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+        )
+        time.sleep(0.8)
+
+    capture(with_playback=False)
+    quiet = loopback_rms(config, remote, "quiet")
+    capture(with_playback=True)
+    playing = loopback_rms(config, remote, "playing")
+
+    # 清理探测产生的临时文件（含设备端），避免每次夜跑留垃圾。
+    adb_target(config, ["shell", "rm", "-f", remote], timeout=15)
+    for label in ("quiet", "playing"):
+        leftover = REPORT_ROOT / f"_nightly_loopback_{label}.wav"
+        with contextlib.suppress(OSError):
+            leftover.unlink()
+
+    if playing is None:
+        return True, "未采集到样本，无法判定回环（不作为失败）。"
+    if quiet is None:
+        quiet = 0.0
+
+    # 正常回环会出现数量级跃升；静音时两者都贴地。
+    if playing <= max(2.0, quiet * 3):
+        return (
+            False,
+            f"回环电平异常：播放时 rms={playing:.1f}，静音基线 rms={quiet:.1f}；"
+            "模拟器麦克风打开了但收到的是静音",
+        )
+    return True, f"回环正常：播放 rms={playing:.1f}（基线 {quiet:.1f}）。"
+
+
+def loopback_rms(config, remote, label):
+    """Pull the captured WAV and return its RMS, or None when no samples exist."""
+    local = REPORT_ROOT / f"_nightly_loopback_{label}.wav"
+    pulled = adb_target(config, ["pull", remote, str(local)], timeout=30)
+    if pulled.returncode != 0 or not local.exists():
+        return None
+    body = local.read_bytes()[44:]
+    count = len(body) // 2
+    if count == 0:
+        return None
+    samples = struct.unpack(f"<{count}h", body[: count * 2])
+    return math.sqrt(sum(s * s for s in samples) / count)
+
+
 def check_audio_preconditions(config, stderr_offset=None):
     """Fail loud before the nightly burns ~50 minutes on doomed audio cases.
 
@@ -1178,7 +1297,17 @@ def check_audio_preconditions(config, stderr_offset=None):
         print(f"[AUDIO-PRECHECK] host mic 桥接探测失败: {mic_detail}")
         return False
 
-    print(f"[AUDIO-PRECHECK] 音频前置检查通过: {detail} {mic_detail}")
+    level_ok, level_detail = emulator_loopback_level(config)
+    if not level_ok:
+        print(f"[AUDIO-PRECHECK] 主机音频回环不可用: {level_detail}")
+        print(
+            "[AUDIO-PRECHECK] 模拟器能连上、音频也播了，但麦克风收到静音；"
+            "依赖音频注入的 [翻译] 用例预期会失败。"
+            "请确认 Windows 播放设备路由到 VB-CABLE，且唤醒后有可用交互式会话。"
+        )
+        return False
+
+    print(f"[AUDIO-PRECHECK] 音频前置检查通过: {detail} {mic_detail} {level_detail}")
     return True
 
 

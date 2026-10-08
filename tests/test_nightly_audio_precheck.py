@@ -10,13 +10,21 @@ App 收不到语音就停在「未连接」，5 条 P0 翻译用例必挂：
     [P0][翻译]单向模式_中文转英文 / 日文转英文 / 英文转中文
     [P0][翻译]手机模式_点击录音_中文转英文 / 英文转中文
 
-报错固定为 `等待翻译结果超时 ... visible_texts=['翻译','未连接',...]`，
-runner 重试（resetting emulator host microphone bridge）对已损坏的设备无效。
+⚠️ 2026-10-08 完整实跑修正了上面的认识（见下），现在检查分三层：
+  1. emulator_audio_health   —— 本次启动的 stderr 有没有 DirectSound 初始化失败
+  2. emulator_host_mic_reachable —— hostmicoff/hostmicon 控制台命令是否可用
+  3. emulator_loopback_level —— **实测**宿主播放能否被模拟器 MIC 收到（rms 判据）
+
+第 3 层是关键：10/07 的失败 run 里 App 状态其实是「已连接」、音频也播了，
+但页面文本为空 —— 即"回环开着却送的是静音"，前两层都看不见这种失败。
+另：所有走音频注入的用例（含 PASS 的 `[音频]` 类）其实都没被 App 听到，
+只是 `[音频]` 类从不断言转录内容，把静音掩盖了；`[翻译]` 类要求真实译文才暴露。
 
 这些测试锁定夜跑必须**提前大声报出**这类环境问题，而不是烧掉约 50 分钟
 再把环境噪声混进质量结论。
 """
 import shutil
+import struct
 
 import pytest
 
@@ -174,7 +182,87 @@ def test_check_preconditions_passes_when_both_ok(temp_root, monkeypatch):
         stderr = ""
 
     monkeypatch.setattr(nr, "adb_target", lambda config, args, timeout=10: Result())
+    # 回环电平探测要真跑 adb，这里单独打桩，保持前置检查测试无副作用。
+    monkeypatch.setattr(nr, "emulator_loopback_level", lambda config, seconds=3.0: (True, "回环正常：stub"))
     assert nr.check_audio_preconditions(HOST_CONFIG, stderr_offset=0) is True
+
+
+def test_check_preconditions_fails_when_loopback_is_silent(temp_root, monkeypatch):
+    """回环"开着但送静音"必须判定失败 —— 这正是 10/07 那 5 条挂掉的真因。"""
+    _write_stderr(temp_root, monkeypatch, "pc_memory_init: above 4g size: 40000000\n")
+
+    class Result:
+        returncode = 0
+        stdout = "OK"
+        stderr = ""
+
+    monkeypatch.setattr(nr, "adb_target", lambda config, args, timeout=10: Result())
+    monkeypatch.setattr(
+        nr,
+        "emulator_loopback_level",
+        lambda config, seconds=3.0: (False, "回环电平异常：播放时 rms=2.0，静音基线 rms=3.0"),
+    )
+    assert nr.check_audio_preconditions(HOST_CONFIG, stderr_offset=0) is False
+
+
+def _wav_with_samples(samples):
+    """构造 tinycap 风格的 16-bit PCM WAV。"""
+    body = struct.pack(f"<{len(samples)}h", *samples)
+    header = bytearray(44)
+    header[0:4] = b"RIFF"
+    header[4:8] = (36 + len(body)).to_bytes(4, "little")
+    header[8:12] = b"WAVE"
+    header[36:40] = b"data"
+    header[40:44] = len(body).to_bytes(4, "little")
+    return bytes(header) + body
+
+
+def test_loopback_rms_none_when_header_only(temp_root, monkeypatch):
+    """44 字节空 WAV（tinycap 没起来）必须返回 None，不能当成"静音"。"""
+    monkeypatch.setattr(nr, "REPORT_ROOT", temp_root)
+    monkeypatch.setattr(nr, "adb_target", lambda config, args, timeout=10: _Ok())
+    (temp_root / "_nightly_loopback_quiet.wav").write_bytes(_wav_with_samples([]))
+    assert nr.loopback_rms(HOST_CONFIG, "/sdcard/x.wav", "quiet") is None
+
+
+class _Ok:
+    returncode = 0
+
+
+def test_loopback_rms_measures_real_signal(temp_root, monkeypatch):
+    """有声音的 WAV 应算出明显非零 rms。"""
+    monkeypatch.setattr(nr, "REPORT_ROOT", temp_root)
+    monkeypatch.setattr(nr, "adb_target", lambda config, args, timeout=10: _Ok())
+    (temp_root / "_nightly_loopback_playing.wav").write_bytes(
+        _wav_with_samples([1000, -1000] * 500)
+    )
+    rms = nr.loopback_rms(HOST_CONFIG, "/sdcard/x.wav", "playing")
+    assert rms is not None and rms > 500
+
+
+def test_loopback_level_skips_when_not_emulator(monkeypatch):
+    ok, detail = nr.emulator_loopback_level({**HOST_CONFIG, "android_adb_serial": "10.0.0.1:5555"})
+    assert ok is True
+    assert "跳过" in detail
+
+
+def test_loopback_level_skips_when_not_host_mode(monkeypatch):
+    ok, detail = nr.emulator_loopback_level({**HOST_CONFIG, "audio_injection_mode": "docker_pulse"})
+    assert ok is True
+    assert "跳过" in detail
+
+
+def test_loopback_level_tolerates_no_root(temp_root, monkeypatch):
+    """拿不到 root 时应跳过而不是失败（不能因为探测手段不可用就拦夜跑）。"""
+    class Denied:
+        returncode = 1
+        stdout = ""
+        stderr = "adbd cannot run as root in production builds"
+
+    monkeypatch.setattr(nr, "adb_target", lambda config, args, timeout=10: Denied())
+    ok, detail = nr.emulator_loopback_level(HOST_CONFIG)
+    assert ok is True
+    assert "root" in detail
 
 
 def test_run_nightly_marks_audio_failure_as_environment_noise(monkeypatch):
