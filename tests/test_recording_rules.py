@@ -103,9 +103,9 @@ def test_augment_recording_steps_accepts_explicit_close_action():
         "tap_point",
         "play_audio",
         "sleep",
-        "click",
-        # `[音频]` 类用例补齐转写断言（2026-10-08 审计的假绿修复）。
+        # 转写断言必须排在"离开录音页"之前（否则转写文本已被导航带走）。
         "assert_transcript",
+        "click",
     ]
     assert metadata["audio_lang"] == "zh"
 
@@ -240,9 +240,9 @@ def test_augment_recording_steps_infers_start_before_explicit_stop():
         "click",
         "play_audio",
         "sleep",
-        "click",
-        # `[音频]` 类用例必须补转写断言，否则静音也会 PASS（2026-10-08 审计的假绿）。
+        # 转写断言先于收尾点击：收尾会导航回列表页，转写文本随之消失。
         "assert_transcript",
+        "click",
     ]
     assert metadata["audio_lang"] == "en"
 
@@ -266,8 +266,8 @@ def test_augment_recording_steps_accepts_start_recording_text_and_next_stop():
         "click",
         "play_audio",
         "sleep",
-        "click",
-        # 同上：`[音频]` 类用例补齐转写断言。
+        # 同上：断言先于收尾点击。
         "assert_transcript",
+        "click",
     ]
     assert metadata["audio_lang"] == "en"

@@ -94,6 +94,47 @@ def test_transcript_markers_use_stable_substring():
     assert step["action"] == "assert_transcript"
 
 
+def test_transcript_assertion_runs_before_leaving_recording_screen():
+    """断言必须排在"停止/离开录音页"之前。
+
+    2026-10-08 实跑发现：`语音记录` 的收尾点击会导航回列表页，转写文本随之
+    消失；断言若排在点击之后就会误报失败（音频明明是好的）。
+    """
+    steps, _ = augment_recording_steps(
+        "[音频]语音记录",
+        [
+            {"action": "click", "name": "点击语音记录入口"},
+            {"action": "click", "name": "点击：开始录音",
+             "locator": {"by": "accessibility_id", "value": "开始录音"}},
+            {"action": "click", "name": "点击录制元素 instance：第 3 步"},
+        ],
+        enable_audio=True,
+        enable_translation=False,
+    )
+    actions = [s["action"] for s in steps]
+    assert "assert_transcript" in actions
+    assert actions.index("assert_transcript") < len(actions) - 1, (
+        "断言不能是最后一步：收尾点击之后转写文本已消失"
+    )
+    assert actions[-1] == "click", "收尾点击应仍在最后"
+
+    # 会议记录同理：断言要在「结束录制」之前。
+    steps2, _ = augment_recording_steps(
+        "[P0][音频]会议记录",
+        [
+            {"action": "click", "name": "点击会议记录",
+             "locator": {"by": "x", "value": "y"}},
+            {"action": "start_meeting_recording", "name": "点击会议记录-底部录制按钮"},
+            {"action": "click", "name": "点击结束录制",
+             "locator": {"by": "x", "value": "y"}},
+        ],
+        enable_audio=True,
+        enable_translation=False,
+    )
+    actions2 = [s["action"] for s in steps2]
+    assert actions2.index("assert_transcript") < actions2.index("click", 2)
+
+
 # --- 断言行为 ---------------------------------------------------------------
 
 class _FakeDriver:

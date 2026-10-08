@@ -432,6 +432,14 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
         if use_phone_toggle and stop_index is not None and index == stop_index:
             continue
 
+        # `[音频]` 类用例：转写断言必须排在"停止/离开录音页"这一点击**之前**。
+        # 实测「语音记录」的收尾点击会导航回列表页，转写文本随之消失，
+        # 若断言排在点击之后就会误报失败（2026-10-08 实跑发现）。
+        if not enable_translation and index == stop_index:
+            augmented_steps.append(build_transcript_assert_step())
+            augmented_steps.append(step)
+            continue
+
         augmented_steps.append(step)
 
         if index == start_index:
@@ -448,10 +456,6 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
                     metadata["target_lang"],
                 )
             )
-        elif not enable_translation and index == stop_index:
-            # `[音频]` 类用例没有翻译校验，但必须验证"音频真的被听到并转写"，
-            # 否则静音时用例仍会通过（2026-10-08 审计发现的假绿）。
-            augmented_steps.append(build_transcript_assert_step())
 
     if enable_image_translation:
         augmented_steps.append(
