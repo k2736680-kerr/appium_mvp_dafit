@@ -104,6 +104,8 @@ def test_augment_recording_steps_accepts_explicit_close_action():
         "play_audio",
         "sleep",
         "click",
+        # `[音频]` 类用例补齐转写断言（2026-10-08 审计的假绿修复）。
+        "assert_transcript",
     ]
     assert metadata["audio_lang"] == "zh"
 
@@ -214,6 +216,8 @@ def test_augment_recording_steps_long_press_skips_recorded_stop_click():
     assert [step["action"] for step in augmented_steps] == [
         "long_press_role",
         "sleep",
+        # 长按录音也必须有转写断言（否则静音照样 PASS）。
+        "assert_transcript",
     ]
 
 
@@ -237,6 +241,8 @@ def test_augment_recording_steps_infers_start_before_explicit_stop():
         "play_audio",
         "sleep",
         "click",
+        # `[音频]` 类用例必须补转写断言，否则静音也会 PASS（2026-10-08 审计的假绿）。
+        "assert_transcript",
     ]
     assert metadata["audio_lang"] == "en"
 
@@ -261,5 +267,7 @@ def test_augment_recording_steps_accepts_start_recording_text_and_next_stop():
         "play_audio",
         "sleep",
         "click",
+        # 同上：`[音频]` 类用例补齐转写断言。
+        "assert_transcript",
     ]
     assert metadata["audio_lang"] == "en"

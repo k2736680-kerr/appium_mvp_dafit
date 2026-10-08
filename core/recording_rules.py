@@ -239,6 +239,37 @@ def build_translation_assert_step(source_lang: str, target_lang: str) -> dict:
     }
 
 
+# 测试音频 source_en.wav 的内容固定为
+# "Hello, nice to meet you. This is a translation test."
+#
+# 期望转录文本按**稳定子串**匹配，不能整句写死：实测语音识别会有小差异，
+# 历史上出现过 "Hello, nice to meet you. ..." / "Hello. Nice to meet you. ..." /
+# "Oh, nice to meet you. ..." / "Nice to meet you. ..."。
+# 但 "this is a translation test" 这段每次都稳定出现，适合作为判据。
+TRANSCRIPT_EXPECTED_MARKERS = (
+    "this is a translation test",
+    "nice to meet you",
+)
+
+
+def build_transcript_assert_step() -> dict:
+    """给 `[音频]` 类用例补一条"App 真的听到并转写出来了"的断言。
+
+    背景（2026-10-08 审计）：`[音频]` 类用例原本是纯点击序列 —— 播音频、
+    点停止、结束，**从不校验转录结果**。于是 9/29~10/07 连续 8 个夜跑里
+    转录文本完全为空，`会议记录`/`语音记录` 却每晚都报 PASSED（假绿）。
+    这个断言让"静音/音频链路坏"直接表现为失败，而不是被静默吞掉。
+    """
+    return {
+        "action": "assert_transcript",
+        "name": "校验录音转写结果",
+        "expected_markers": list(TRANSCRIPT_EXPECTED_MARKERS),
+        "timeout": 45,
+        "poll_interval": 2,
+        "check_blockers": False,
+    }
+
+
 def is_image_translation_visual_case(title: str) -> bool:
     """仅「从相册选图」的图片翻译做视觉模型校验。
 
@@ -366,6 +397,9 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
                         metadata["target_lang"],
                     )
                 )
+            elif not enable_translation:
+                # 长按录音同样必须验证转写，否则静音也 PASS。
+                augmented_steps.append(build_transcript_assert_step())
             continue
 
         if use_phone_toggle and index == start_index:
@@ -414,6 +448,10 @@ def augment_recording_steps(title: str, steps: list[dict], enable_audio: bool, e
                     metadata["target_lang"],
                 )
             )
+        elif not enable_translation and index == stop_index:
+            # `[音频]` 类用例没有翻译校验，但必须验证"音频真的被听到并转写"，
+            # 否则静音时用例仍会通过（2026-10-08 审计发现的假绿）。
+            augmented_steps.append(build_transcript_assert_step())
 
     if enable_image_translation:
         augmented_steps.append(

@@ -225,6 +225,8 @@ class CaseRunner:
             self.action_wait_text(step)
         elif action == "assert_translation":
             self.action_assert_translation(step)
+        elif action == "assert_transcript":
+            self.action_assert_transcript(step)
         elif action == "assert_image_translation":
             self.action_assert_image_translation(step)
         elif action == "press_back":
@@ -1434,6 +1436,45 @@ class CaseRunner:
 
     def extract_page_texts(self):
         return extract_visible_texts(self.driver.page_source)
+
+    def action_assert_transcript(self, step):
+        """校验 App 真的把注入的音频转写出来了。
+
+        用于 `[音频]` 类用例：这类用例原本是纯点击序列，不校验转录结果，
+        静音时也会 PASS（2026-10-08 审计：9/29~10/07 连续 8 个夜跑转录为空
+        却全部报绿）。这里按"稳定子串"匹配，容忍语音识别的小差异。
+        """
+        markers = [str(m).strip().lower() for m in step.get("expected_markers", []) if str(m).strip()]
+        if not markers:
+            raise ValueError("assert_transcript 缺少 expected_markers")
+
+        timeout = float(step.get("timeout", DEFAULT_TIMEOUT))
+        poll_interval = float(step.get("poll_interval", 2))
+        end_time = time.time() + timeout
+        last_texts = []
+
+        while time.time() < end_time:
+            page_source = self.driver.page_source
+
+            blocker = self.find_blocker(page_source)
+            if blocker:
+                self.artifacts.save(self.driver, 0, "blocked_assert_transcript")
+                raise AssertionError(f"等待转写结果时检测到阻断信息：{blocker}")
+
+            last_texts = extract_visible_texts(page_source)
+            haystack = " ".join(last_texts).lower()
+            hit = next((m for m in markers if m in haystack), None)
+            if hit:
+                safe_print("[TRANSCRIPT]", f"命中转写文本: {hit!r}")
+                return
+            time.sleep(poll_interval)
+
+        self.artifacts.save(self.driver, 0, "blocked_assert_transcript")
+        raise AssertionError(
+            f"等待录音转写超时：未在页面上找到 {markers}；"
+            f"visible_texts={last_texts[:12]}。"
+            "音频注入可能未生效（宿主回环送的是静音），也可能是 App 端转写失败。"
+        )
 
     def action_assert_translation(self, step):
         timeout = float(step.get("timeout", DEFAULT_TIMEOUT))
