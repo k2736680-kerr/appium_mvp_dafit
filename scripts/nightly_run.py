@@ -119,13 +119,13 @@ def within_send_window(config, current=None):
     return current_time >= start or current_time <= end
 
 
-def run(command, timeout=None, env=None):
+def run(command, timeout=None, env=None, text_encoding=None):
     return subprocess.run(
         command,
         cwd=PROJECT_ROOT,
         env=env,
         text=True,
-        encoding=SUBPROCESS_ENCODING,
+        encoding=text_encoding or SUBPROCESS_ENCODING,
         errors="replace",
         capture_output=True,
         timeout=timeout,
@@ -999,6 +999,12 @@ def run_pytest(config):
         env["AURO_LOGIN_ACCOUNT"] = str(config["auro_login_account"])
     if config.get("auro_login_password"):
         env["AURO_LOGIN_PASSWORD"] = str(config["auro_login_password"])
+    # pytest 的用例名/断言里含大量中文。本机 locale 是 cp936，子进程默认按 GBK
+    # 输出，而 pytest 实际写的是 UTF-8，父进程再按 GBK 解码就会得到
+    # `鐐瑰嚮棣栭〉` 这种乱码，夜跑日志完全没法排查。这里显式统一成 UTF-8：
+    # 让子进程按 UTF-8 输出（PYTHONUTF8/PYTHONIOENCODING），父进程也按 UTF-8 解码。
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     command = [
         str(python_exe),
         "-m",
@@ -1006,7 +1012,12 @@ def run_pytest(config):
         "-v",
         str(PROJECT_ROOT / "tests" / "test_run_recordings.py"),
     ]
-    return run(command, timeout=int(config["pytest_timeout_seconds"]), env=env)
+    return run(
+        command,
+        timeout=int(config["pytest_timeout_seconds"]),
+        env=env,
+        text_encoding="utf-8",
+    )
 
 
 def write_run_log(result):
