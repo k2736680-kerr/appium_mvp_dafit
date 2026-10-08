@@ -1075,13 +1075,30 @@ EMULATOR_AUDIO_FAILURE_SIGNATURES = (
     "dsound:",
 )
 NO_INTERACTIVE_SESSION_WINDOW = "window 0000000000000000"
+EMULATOR_STDERR_PATH = REPORT_ROOT / "emulator_stderr.log"
 
 
-def emulator_audio_health(config):
+def emulator_stderr_offset():
+    """Byte size of the appended emulator stderr, used as a launch baseline.
+
+    start_detached() opens emulator_stderr.log in append mode, so the file keeps
+    **every previous run's** output.  Without a baseline, a failure from last
+    night's run would still sit in the file and be misread as this run's failure.
+    """
+    try:
+        return EMULATOR_STDERR_PATH.stat().st_size
+    except OSError:
+        return 0
+
+
+def emulator_audio_health(config, stderr_offset=0):
     """Report whether the emulator host-audio bridge came up on this launch.
 
     Reads the stderr that start_detached() already appends for the emulator,
-    so this adds no new capture mechanism.  Returns (ok, detail).
+    so this adds no new capture mechanism.  Only output written **after**
+    ``stderr_offset`` (captured before the emulator launch) is considered,
+    otherwise stale failures from earlier runs cause false positives.
+    Returns (ok, detail).
     """
     if str(config.get("audio_injection_mode") or "host").strip().lower() != "host":
         return True, "音频注入非 host 模式，跳过主机声卡检查。"
@@ -1090,16 +1107,24 @@ def emulator_audio_health(config):
     if audio_backend != "dsound":
         return True, f"音频后端为 {audio_backend or '<空>'}，跳过 DirectSound 检查。"
 
-    log_path = REPORT_ROOT / "emulator_stderr.log"
-    if not log_path.exists():
+    if not EMULATOR_STDERR_PATH.exists():
         return True, "未找到 emulator_stderr.log，无法判断音频桥接状态。"
 
-    recent = log_path.read_text(encoding="utf-8", errors="replace")[-20000:]
-    hits = [sig for sig in EMULATOR_AUDIO_FAILURE_SIGNATURES if sig in recent]
-    if not hits:
-        return True, "模拟器 stderr 未出现 DirectSound 初始化失败。"
+    try:
+        with EMULATOR_STDERR_PATH.open("rb") as handle:
+            handle.seek(max(0, int(stderr_offset)))
+            fresh = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return True, "读取 emulator_stderr.log 失败，无法判断音频桥接状态。"
 
-    window_missing = NO_INTERACTIVE_SESSION_WINDOW in recent
+    if not fresh.strip():
+        return True, "本次启动未向 emulator_stderr.log 写入内容，视为音频桥接正常。"
+
+    hits = [sig for sig in EMULATOR_AUDIO_FAILURE_SIGNATURES if sig in fresh]
+    if not hits:
+        return True, "本次启动的模拟器 stderr 未出现 DirectSound 初始化失败。"
+
+    window_missing = NO_INTERACTIVE_SESSION_WINDOW in fresh
     detail = (
         "模拟器 DirectSound 后端初始化失败"
         f"（命中 {', '.join(hits)}）"
@@ -1130,9 +1155,15 @@ def emulator_host_mic_reachable(config):
     return True, "host mic 桥接命令可用。"
 
 
-def check_audio_preconditions(config):
-    """Fail loud before the nightly burns ~50 minutes on doomed audio cases."""
-    ok, detail = emulator_audio_health(config)
+def check_audio_preconditions(config, stderr_offset=None):
+    """Fail loud before the nightly burns ~50 minutes on doomed audio cases.
+
+    ``stderr_offset`` is the emulator_stderr.log size captured right before this
+    run launched the emulator; only output after it belongs to this launch.
+    """
+    if stderr_offset is None:
+        stderr_offset = emulator_stderr_offset()
+    ok, detail = emulator_audio_health(config, stderr_offset=stderr_offset)
     if not ok:
         print(f"[AUDIO-PRECHECK] 主机音频回环不可用: {detail}")
         print(
@@ -1251,12 +1282,15 @@ def run_nightly(args):
     if not qiniu_requested(config):
         report_base_url = ensure_report_server(config)
     clean_runtime_before_run(config)
+    # 记录快照：emulator_stderr.log 是追加写的，只有这个偏移之后的内容才是
+    # 本次启动产生的，否则昨晚的失败会被误判成本次失败。
+    audio_stderr_offset = emulator_stderr_offset()
     ensure_emulator(config)
     register_runtime_cleanup(config)
     ensure_target_app(config)
     ensure_appium(config)
 
-    audio_ready = check_audio_preconditions(config)
+    audio_ready = check_audio_preconditions(config, stderr_offset=audio_stderr_offset)
 
     result = run_pytest(config)
     log_path = write_run_log(result)

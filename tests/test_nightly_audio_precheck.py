@@ -50,14 +50,18 @@ DSPAWN_FAILURE = (
 
 
 def _write_stderr(temp_root, monkeypatch, text):
+    """写 stderr 并把模块常量指向它；返回本次写入的起始偏移。"""
     monkeypatch.setattr(nr, "REPORT_ROOT", temp_root)
-    (temp_root / "emulator_stderr.log").write_text(text, encoding="utf-8")
+    path = temp_root / "emulator_stderr.log"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(nr, "EMULATOR_STDERR_PATH", path)
+    return len(text.encode("utf-8"))
 
 
 def test_audio_health_flags_dsound_failure_when_no_interactive_session(temp_root, monkeypatch):
     """0 号窗口句柄 = 没有交互式桌面会话，必须判定为音频不可用。"""
     _write_stderr(temp_root, monkeypatch, DSPAWN_FAILURE)
-    ok, detail = nr.emulator_audio_health(HOST_CONFIG)
+    ok, detail = nr.emulator_audio_health(HOST_CONFIG, stderr_offset=0)
     assert ok is False
     assert "DirectSound" in detail
     assert "交互式桌面会话" in detail
@@ -65,36 +69,57 @@ def test_audio_health_flags_dsound_failure_when_no_interactive_session(temp_root
 
 def test_audio_health_passes_on_clean_emulator_stderr(temp_root, monkeypatch):
     _write_stderr(temp_root, monkeypatch, "pc_memory_init: above 4g size: 40000000\n")
-    ok, detail = nr.emulator_audio_health(HOST_CONFIG)
+    ok, detail = nr.emulator_audio_health(HOST_CONFIG, stderr_offset=0)
     assert ok is True
 
 
 def test_audio_health_skips_when_not_host_mode(temp_root, monkeypatch):
     """非 host 注入模式不依赖主机声卡，不应误报。"""
     _write_stderr(temp_root, monkeypatch, DSPAWN_FAILURE)
-    ok, _ = nr.emulator_audio_health({**HOST_CONFIG, "audio_injection_mode": "docker_pulse"})
+    ok, _ = nr.emulator_audio_health(
+        {**HOST_CONFIG, "audio_injection_mode": "docker_pulse"}, stderr_offset=0
+    )
     assert ok is True
 
 
 def test_audio_health_skips_other_audio_backend(temp_root, monkeypatch):
     _write_stderr(temp_root, monkeypatch, DSPAWN_FAILURE)
-    ok, _ = nr.emulator_audio_health({**HOST_CONFIG, "emulator_audio_backend": "none"})
+    ok, _ = nr.emulator_audio_health(
+        {**HOST_CONFIG, "emulator_audio_backend": "none"}, stderr_offset=0
+    )
     assert ok is True
 
 
 def test_audio_health_tolerates_missing_log(temp_root, monkeypatch):
     """还没写过 stderr 日志时不应因缺文件而炸掉夜跑。"""
     monkeypatch.setattr(nr, "REPORT_ROOT", temp_root)
-    ok, detail = nr.emulator_audio_health(HOST_CONFIG)
+    monkeypatch.setattr(nr, "EMULATOR_STDERR_PATH", temp_root / "emulator_stderr.log")
+    ok, detail = nr.emulator_audio_health(HOST_CONFIG, stderr_offset=0)
     assert ok is True
     assert "无法判断" in detail
 
 
-def test_audio_health_only_reads_tail_of_log(temp_root, monkeypatch):
-    """很老的失败不应永久污染判断：只看最近的日志窗口。"""
-    _write_stderr(temp_root, monkeypatch, DSPAWN_FAILURE + ("x" * 40000))
-    ok, _ = nr.emulator_audio_health(HOST_CONFIG)
-    assert ok is True
+def test_stale_failure_from_previous_run_is_ignored(temp_root, monkeypatch):
+    """跨夜追加的文件里，**上次**的失败不能算本次失败（本次修复的假阳性）。
+
+    2026-10-08 实跑暴露：emulator_stderr.log 是追加写的且只有几 KB，
+    按"最后 20000 字符"读取会把昨晚的 dsound 失败也算进来 → 42/42 全绿
+    却误报音频不可用。正确做法是按启动前记录的偏移只读本次新增内容。
+    """
+    size = _write_stderr(temp_root, monkeypatch, DSPAWN_FAILURE)
+    ok, detail = nr.emulator_audio_health(HOST_CONFIG, stderr_offset=size)
+    assert ok is True, "上一次运行的失败不应算作本次失败"
+
+
+def test_fresh_failure_after_baseline_is_still_caught(temp_root, monkeypatch):
+    """本次启动新写入的失败必须仍能被抓到（别因为修假阳性而漏报）。"""
+    size = _write_stderr(temp_root, monkeypatch, "pc_memory_init: ok\n")
+    path = temp_root / "emulator_stderr.log"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(DSPAWN_FAILURE)
+    ok, detail = nr.emulator_audio_health(HOST_CONFIG, stderr_offset=size)
+    assert ok is False
+    assert "DirectSound" in detail
 
 
 def test_host_mic_probe_skips_for_real_device():
@@ -136,7 +161,7 @@ def test_check_preconditions_fails_fast_on_audio_failure(temp_root, monkeypatch)
     monkeypatch.setattr(
         nr, "emulator_host_mic_reachable", lambda config: (called.append(1), (True, ""))[1]
     )
-    assert nr.check_audio_preconditions(HOST_CONFIG) is False
+    assert nr.check_audio_preconditions(HOST_CONFIG, stderr_offset=0) is False
     assert called == [], "音频已不可用时不应继续探测 host mic"
 
 
@@ -149,7 +174,7 @@ def test_check_preconditions_passes_when_both_ok(temp_root, monkeypatch):
         stderr = ""
 
     monkeypatch.setattr(nr, "adb_target", lambda config, args, timeout=10: Result())
-    assert nr.check_audio_preconditions(HOST_CONFIG) is True
+    assert nr.check_audio_preconditions(HOST_CONFIG, stderr_offset=0) is True
 
 
 def test_run_nightly_marks_audio_failure_as_environment_noise(monkeypatch):
@@ -168,7 +193,7 @@ def test_run_nightly_marks_audio_failure_as_environment_noise(monkeypatch):
     monkeypatch.setattr(nr, "register_runtime_cleanup", lambda config: None)
     monkeypatch.setattr(nr, "ensure_target_app", lambda config: None)
     monkeypatch.setattr(nr, "ensure_appium", lambda config: None)
-    monkeypatch.setattr(nr, "check_audio_preconditions", lambda config: calls.append("precheck") or False)
+    monkeypatch.setattr(nr, "check_audio_preconditions", lambda config, stderr_offset=None: calls.append("precheck") or False)
     monkeypatch.setattr(nr, "run_pytest", lambda config: Result())
     monkeypatch.setattr(nr, "write_run_log", lambda result: None)
 
