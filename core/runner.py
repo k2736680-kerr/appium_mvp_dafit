@@ -36,6 +36,15 @@ def safe_print(*args, **kwargs):
     print(*safe_args, **kwargs)
 
 
+# 这些前台包不挡目标 App，无需清理；否则每条用例都要多跑几轮无谓的
+# terminate/BACK，白白拖慢夜跑。
+BENIGN_FOREGROUND_PACKAGES = frozenset({
+    "com.android.launcher3",
+    "com.google.android.apps.nexuslauncher",
+    "com.android.systemui",
+})
+
+
 DEFAULT_BLOCKERS = [
     "耳机未连接",
     "请连接蓝牙耳机以使用此功能",
@@ -221,6 +230,8 @@ class CaseRunner:
         elif action == "press_back":
             self.driver.press_keycode(4)
             time.sleep(step.get("wait_after", 1))
+        elif action == "dismiss_system_surfaces":
+            self.action_dismiss_system_surfaces(step)
         elif action == "home":
             self.driver.press_keycode(3)
             time.sleep(step.get("wait_after", 1))
@@ -559,6 +570,40 @@ class CaseRunner:
             return bool(checker())
         except Exception:
             return None
+
+    def action_dismiss_system_surfaces(self, step):
+        """Close system surfaces (share sheet, picker) left over the target App.
+
+        录制里点「分享邀请链接」会拉起 com.android.intentresolver 分享面板。
+        面板不会自己关闭，会挡住后续用例的 App 启动（create_driver 阶段即报
+        "Cannot start the ... application"），因此用例收尾必须显式关掉它。
+        """
+        rounds = int(step.get("rounds", 4))
+        for _ in range(rounds):
+            package = self.current_package()
+            # 回到桌面就算干净了：目标 App 尚未启动，没有要清理的挡路页面。
+            if not package or package == APP_PACKAGE or package in BENIGN_FOREGROUND_PACKAGES:
+                return
+            safe_print(f"[CLEANUP] 关闭挡在目标 App 前的系统页面: {package}")
+            closed = False
+            try:
+                self.driver.terminate_app(package)
+                closed = True
+            except Exception:
+                pass
+            time.sleep(0.5)
+            if not closed or self.current_package() == package:
+                try:
+                    self.driver.press_keycode(4)
+                except Exception:
+                    pass
+                time.sleep(0.5)
+        # 兜底：回到桌面，避免残留页面跨用例传播。
+        try:
+            self.driver.press_keycode(3)
+        except Exception:
+            pass
+        time.sleep(step.get("wait_after", 1))
 
     def hide_keyboard_if_present(self):
         shown_before = self.is_keyboard_shown()

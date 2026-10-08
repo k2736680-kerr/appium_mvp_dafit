@@ -1027,6 +1027,28 @@ def write_run_log(result):
     return log_path
 
 
+# 脏前台（分享面板等）残留会让 Appium 在 create_driver 阶段就报
+# "Cannot start the ... application / ... never started"，一次残留会连带
+# 拖垮后面整批用例。这里显式报警，避免这类回归静默混进夜跑结论。
+CASCADE_SIGNATURES = (
+    "Cannot start the",
+    "never started",
+)
+
+
+def summarize_cascade_risk(result):
+    """Return (count, sample_line) for the dirty-foreground cascade signature."""
+    text = f"{result.stdout or ''}\n{result.stderr or ''}"
+    hits = sum(text.count(sig) for sig in CASCADE_SIGNATURES)
+    sample = ""
+    if hits:
+        for line in text.splitlines():
+            if any(sig in line for sig in CASCADE_SIGNATURES):
+                sample = line.strip()
+                break
+    return hits, sample
+
+
 def write_fatal_log(exc):
     log_dir = PROJECT_ROOT / "reports" / "nightly_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -1133,7 +1155,16 @@ def run_nightly(args):
     ensure_appium(config)
 
     result = run_pytest(config)
-    write_run_log(result)
+    log_path = write_run_log(result)
+
+    cascade_hits, cascade_sample = summarize_cascade_risk(result)
+    if cascade_hits:
+        print(
+            f"[CASCADE-RISK] 检测到 {cascade_hits} 处脏前台连带失败特征"
+            f"（分享面板未关闭之类的残留会拖垮后续整批用例）: {cascade_sample}"
+        )
+    else:
+        print("[CASCADE-RISK] 未检测到脏前台连带失败特征。")
 
     bundle = latest_report_bundle()
     if not bundle:

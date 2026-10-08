@@ -26,6 +26,17 @@ DEVICE_IMAGE_TRANSLATION_SOURCE = "/sdcard/DCIM/AppiumMvp/image_translation_sour
 APP_RESTARTED_ONCE = False
 HOME_MARKER = "翻译中心"
 
+# 点击后会把系统分享面板拉到前台的入口文案；命中则用例末尾自动补收尾清理。
+SHARE_ENTRY_MARKER = "分享邀请链接"
+
+# 这些前台包不挡目标 App，没必要清理（否则每条用例都要多跑几轮无谓的
+# terminate/BACK，白白拖慢夜跑）。
+_BENIGN_FOREGROUND_PACKAGES = frozenset({
+    "com.android.launcher3",
+    "com.google.android.apps.nexuslauncher",
+    "com.android.systemui",
+})
+
 # 协议类页面正文中常出现「网络异常」等字样，全局子串会误判为阻断。
 _REGULATION_TITLE_MARKERS = ("服务协议", "隐私政策", "用户协议")
 
@@ -851,6 +862,22 @@ def recording_to_case(py_file: Path):
         enable_translation=labels["enable_translation"],
     )
 
+    # 录制里点「分享邀请链接」会拉起系统分享面板（com.android.intentresolver）。
+    # 面板不会自动关闭，会盖住目标 App 并跨用例残留，导致后续用例在
+    # create_driver 阶段直接报 "Cannot start the ... application"。
+    # 这里自动补一步收尾把它关掉，避免污染后面的用例。
+    if any(
+        SHARE_ENTRY_MARKER in str((step.get("locator") or {}).get("value", ""))
+        for step in steps
+    ):
+        steps.append({
+            "action": "dismiss_system_surfaces",
+            "name": "关闭分享面板等系统页面",
+            "rounds": 4,
+            "wait_after": 1,
+            "check_blockers": False,
+        })
+
     starts_from_launcher = recording_starts_from_launcher(raw_locators)
 
     return {
@@ -947,6 +974,51 @@ def wait_for_package(driver, package_name, timeout=15):
             return True
         time.sleep(0.5)
     return False
+
+
+def dismiss_foreground_interference(driver, max_rounds=6) -> str:
+    """Close system surfaces that cover the target App before a case starts.
+
+    录制里点「分享邀请链接」会唤起系统分享面板（com.android.intentresolver）。
+    该用例自身 PASSED，但面板不会被自动关闭，而且会跨用例残留：它挡住
+    com.moyoung.auro.ai 的启动，导致后续用例在 create_driver 阶段就报
+    "Cannot start the 'com.moyoung.auro.ai' application / ... never started"。
+
+    因此进入用例前必须清理脏前台。这里**不能只 terminate 自己的 App**：
+    关键在于连挡路的系统页面一起关掉。返回最终（清理后的）前台包名。
+    """
+    for _ in range(max_rounds):
+        package = driver_current_package(driver)
+        # 回到桌面（或没有前台信息）就算干净了：目标 App 还未启动，
+        # 没有再需要清理的挡路页面。继续循环只会白白拖慢每条用例。
+        if not package or package == APP_PACKAGE or package in _BENIGN_FOREGROUND_PACKAGES:
+            return package
+
+        print(f"[PRELUDE] 清理挡在目标 App 前的页面: {package}")
+        # 1) 先 terminate 调用方 App 之外的挡路包（分享面板/相册/设置等）。
+        try:
+            driver.terminate_app(package)
+        except Exception as exc:
+            print(f"[PRELUDE] terminate_app({package}) 忽略异常: {exc}")
+        time.sleep(0.6)
+
+        # 2) terminate 无效时退回 BACK（分享面板、照片选择器等响应返回键）。
+        if driver_current_package(driver) == package:
+            try:
+                driver.press_keycode(4)
+            except Exception as exc:
+                print(f"[PRELUDE] press_keycode(4) 忽略异常: {exc}")
+            time.sleep(0.6)
+
+        # 3) 仍被挡住才回到桌面重新拉起，避免死循环。
+        if driver_current_package(driver) == package:
+            try:
+                driver.press_keycode(3)
+            except Exception as exc:
+                print(f"[PRELUDE] press_keycode(3) 忽略异常: {exc}")
+            time.sleep(0.6)
+
+    return driver_current_package(driver)
 
 
 def save_failure_debug(driver, case_id, error):
@@ -1054,7 +1126,17 @@ def ensure_app_home(driver, timeout=20, max_back=6):
     # 可能直接把应用退到 Launcher，进一步污染后续用例。
     if not driver_current_package(driver) or driver_current_package(driver) == APP_PACKAGE:
         for i in range(max_back):
-            driver.press_keycode(4)
+            # App 还在启动（Splash Screen 未消失）时 mCurrentFocus=null，
+            # uiautomator2 会拒绝注入按键并抛 InvalidElementStateException。
+            # 这是冷启动竞态：此时不该按 BACK，而应等 App 自己起来。
+            # 冷启动可能明显超过 1 秒，所以这里用完整 timeout 等待首页。
+            try:
+                driver.press_keycode(4)
+            except Exception as exc:
+                print(f"[PRELUDE] press_keycode(4) 忽略异常（App 可能仍在启动）: {exc}")
+                if wait_home(f"03_home_found_before_back_{i + 1}", timeout):
+                    return
+                continue
             time.sleep(1)
             if wait_home(f"03_home_found_after_back_{i + 1}", 1):
                 return
@@ -1085,6 +1167,10 @@ def ensure_app_home(driver, timeout=20, max_back=6):
 
 def prepare_case_start(driver, start_mode="app"):
     """Reset only the target App between cases without clearing user data."""
+    # 先清掉上一条用例残留的挡路页面（尤其是分享面板），再 terminate 目标 App。
+    # 顺序很重要：只 terminate 自己的 App 清不掉盖在上面的系统页面。
+    dismiss_foreground_interference(driver)
+
     try:
         driver.terminate_app(APP_PACKAGE)
     except Exception as exc:
@@ -1096,8 +1182,19 @@ def prepare_case_start(driver, start_mode="app"):
         time.sleep(0.8)
         return
 
+    # 目标 App 被 terminate 后，若又有其它页面抢到前台，这里再清一次。
+    dismiss_foreground_interference(driver)
+
     driver.activate_app(APP_PACKAGE)
     time.sleep(1.5)
+    if not wait_for_package(driver, APP_PACKAGE, timeout=15):
+        # activate_app 被脏前台挡住时，清理后重试一次，而不是直接判失败。
+        # 否则一次残留会让后续整批用例连带失败。
+        blocked_by = driver_current_package(driver)
+        print(f"[PRELUDE] activate_app 未生效（前台={blocked_by!r}），清理后重试")
+        dismiss_foreground_interference(driver)
+        driver.activate_app(APP_PACKAGE)
+        time.sleep(1.5)
     if not wait_for_package(driver, APP_PACKAGE, timeout=15):
         raise AssertionError(
             f"启动用例前目标 App 未进入前台，实际 package={driver_current_package(driver)!r}"

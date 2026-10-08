@@ -37,7 +37,6 @@ TRANSIENT_SESSION_ERRORS = (
     "connectionreseterror",
     "connection aborted",
     "protocolerror",
-    "cannot start the",
     "error getting device api level",
     "adbexec",
     "socket hang up",
@@ -51,6 +50,12 @@ TRANSIENT_SESSION_ERRORS = (
 
 NON_TRANSIENT_SESSION_ERRORS = (
     "target_app_missing",
+    # "cannot start the ... application / '*' never started" 不是瞬态网络问题，
+    # 而是**有页面挡在目标 App 前面**（典型：录制点「分享邀请链接」后残留的
+    # com.android.intentresolver 分享面板）。把它当瞬态会导致每条用例反复
+    # 重启 Appium 后仍然失败，13 条用例白烧 ~50 分钟，还掩盖真实根因。
+    # 正确处理是清理脏前台（见 prepare_case_start / dismiss_system_surfaces）。
+    "cannot start the",
 )
 
 SUBPROCESS_ENCODING = locale.getencoding()
